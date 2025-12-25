@@ -15,7 +15,6 @@ import {
   writeBatch
 } from 'firebase/firestore';
 
-// Configuração do PDF.js Global
 declare const pdfjsLib: any;
 if (typeof window !== 'undefined' && 'pdfjsLib' in window) {
   pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
@@ -57,16 +56,13 @@ export default function App() {
   const [infractions, setInfractions] = useState<Infraction[]>([]);
   const [isRecording, setIsRecording] = useState(false);
   const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
-  const [importText, setImportText] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [batchStatus, setBatchStatus] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedSearch(searchQuery);
-    }, 300);
+    const timer = setTimeout(() => setDebouncedSearch(searchQuery), 300);
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
@@ -106,7 +102,28 @@ export default function App() {
       .slice(0, 10);
   }, [infractions]);
 
-  // PARSER REFORMULADO - Mais inteligente para MBFT
+  // EXTRATOR DE SEÇÕES ROBUSTO
+  const extractSectionFromMBFT = (content: string, startKw: string, endKeywords: string[]) => {
+    const lowerContent = content.toLowerCase();
+    const startIdx = lowerContent.indexOf(startKw.toLowerCase());
+    if (startIdx === -1) return [];
+
+    let endIdx = content.length;
+    for (const kw of endKeywords) {
+      const idx = lowerContent.indexOf(kw.toLowerCase(), startIdx + startKw.length);
+      if (idx !== -1 && idx < endIdx) endIdx = idx;
+    }
+
+    const rawSection = content.substring(startIdx + startKw.length, endIdx);
+    
+    // Divide por nova linha ou por números de lista (ex: "1. ", "2. ")
+    return rawSection
+      .split(/\n|(?=\d+[\s\.)-])/) 
+      .map(line => line.trim().replace(/^\d+[\s\.)-]*|^[•\-\*]\s*/, ''))
+      .filter(line => line.length > 12 && !line.match(/QUANDO (NÃO )?AUTUAR/i))
+      .slice(0, 15);
+  };
+
   const parseManualText = (text: string): Partial<Infraction> | null => {
     try {
       const clean = (str: string) => str ? str.trim().replace(/\s+/g, ' ') : '';
@@ -120,17 +137,12 @@ export default function App() {
         gravidade: /Gravidade:\s*([\s\S]*?)(?=Penalidade:|Infrator:|$)/i
       };
 
-      const result: any = {
-        quando_atuar: [],
-        quando_nao_atuar: []
-      };
-
+      const result: any = {};
       Object.entries(fields).forEach(([key, regex]) => {
         const match = text.match(regex);
         if (match) result[key] = clean(match[1]);
       });
 
-      // Lógica de Natureza
       const grav = (result.gravidade || '').toLowerCase();
       if (grav.includes('leve')) result.natureza = Natureza.LEVE;
       else if (grav.includes('grave')) result.natureza = Natureza.GRAVE;
@@ -141,33 +153,20 @@ export default function App() {
       if (!result.codigo_enquadramento) return null;
       if (!result.titulo_curto) result.titulo_curto = result.descricao?.substring(0, 80) || `Infração ${result.codigo_enquadramento}`;
 
-      // EXTRATOR DE SEÇÕES "QUANDO ATUAR" E "NÃO ATUAR" (Mais robusto)
-      const extractSection = (content: string, startRegex: RegExp, endRegex: RegExp) => {
-        const startMatch = content.match(startRegex);
-        if (!startMatch) return [];
-        const startIndex = startMatch.index! + startMatch[0].length;
-        const remaining = content.substring(startIndex);
-        const endMatch = remaining.match(endRegex);
-        const sectionText = endMatch ? remaining.substring(0, endMatch.index) : remaining;
-        
-        return sectionText
-          .split('\n')
-          .map(line => line.trim().replace(/^\d+[\s\.)-]*|^[•\-\*]\s*/, '')) // Limpa números e bullets
-          .filter(line => line.length > 8) // Filtra frases curtas/lixo
-          .slice(0, 10);
+      // Tenta extrair "Quando Atuar" e "Não Atuar" com variações de títulos do MBFT
+      const stopWords = ["QUANDO NÃO AUTUAR", "DEFINIÇÕES E PROCEDIMENTOS", "EXEMPLOS DE AIT", "O QUE OBSERVAR"];
+      
+      result.quando_atuar = extractSectionFromMBFT(text, "QUANDO AUTUAR", stopWords);
+      
+      // Se a primeira falhar, tenta com minúscula
+      if (result.quando_atuar.length === 0) {
+        result.quando_atuar = extractSectionFromMBFT(text, "Quando AUTUAR", stopWords);
       }
 
-      result.quando_atuar = extractSection(
-        text, 
-        /Quando AUTUAR[:\-\s]*/i, 
-        /Quando NÃO Autuar|Definições e Procedimentos|Exemplos de AIT/i
-      );
-
-      result.quando_nao_atuar = extractSection(
-        text, 
-        /Quando NÃO Autuar[:\-\s]*/i, 
-        /Definições e Procedimentos|Exemplos de AIT|O que observar/i
-      );
+      result.quando_nao_atuar = extractSectionFromMBFT(text, "QUANDO NÃO AUTUAR", stopWords);
+      if (result.quando_nao_atuar.length === 0) {
+        result.quando_nao_atuar = extractSectionFromMBFT(text, "Quando NÃO Autuar", stopWords);
+      }
 
       return result;
     } catch (e) { return null; }
@@ -182,7 +181,7 @@ export default function App() {
     for (let i = 0; i < blocks.length; i++) {
       if (i % 15 === 0) {
         await yieldToBrowser();
-        setBatchStatus(`Ficha ${i + 1} de ${blocks.length}...`);
+        setBatchStatus(`Analisando ficha ${i + 1} de ${blocks.length}...`);
       }
       const fullText = `Tipificação Resumida: ${blocks[i]}`;
       const parsed = parseManualText(fullText);
@@ -213,27 +212,37 @@ export default function App() {
   const processPDF = async (file: File) => {
     setIsProcessing(true);
     setProgress(0);
-    setBatchStatus('Processando PDF...');
+    setBatchStatus('Iniciando leitura do PDF...');
     try {
       const arrayBuffer = await file.arrayBuffer();
       const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-      let fullText = '';
+      let fullTextAccumulator = '';
+      
       for (let i = 1; i <= pdf.numPages; i++) {
         const page = await pdf.getPage(i);
         const textContent = await page.getTextContent();
-        fullText += `\n Tipificação Resumida: ` + textContent.items.map((item: any) => item.str).join(' '); 
-        if (i % 10 === 0) {
+        
+        // MUDANÇA CRÍTICA: Juntar com \n para preservar a estrutura de tópicos
+        const pageText = textContent.items.map((item: any) => item.str).join('\n');
+        fullTextAccumulator += `\nTipificação Resumida:\n` + pageText; 
+        
+        if (i % 10 === 0 || i === pdf.numPages) {
           setProgress(Math.round((i / pdf.numPages) * 100));
+          setBatchStatus(`Página ${i} de ${pdf.numPages} lida...`);
           await yieldToBrowser();
         }
       }
-      const count = await handleBulkImport(fullText);
-      alert(`${count} infrações importadas!`);
+
+      setBatchStatus('Processando fichas técnicas...');
+      const importedCount = await handleBulkImport(fullTextAccumulator);
+      alert(`${importedCount} multas importadas com as orientações técnicas!`);
       setIsAdminPanelOpen(false);
     } catch (e) {
-      alert('Erro ao ler PDF.');
+      alert('Erro ao processar PDF.');
     } finally {
       setIsProcessing(false);
+      setProgress(0);
+      setBatchStatus('');
     }
   };
 
@@ -248,7 +257,7 @@ export default function App() {
     try {
       const infRef = doc(db, 'infractions', inf.id);
       await updateDoc(infRef, { count_atuacoes: increment(1) });
-      alert(`Atuação registrada em ${inf.codigo_enquadramento}`);
+      alert(`Registrado em ${inf.codigo_enquadramento}`);
       setQuickCode('');
     } catch (e) { alert('Erro ao salvar'); } finally { setIsRecording(false); }
   };
@@ -257,27 +266,16 @@ export default function App() {
     return (
       <div className="min-h-screen bg-blue-900 flex flex-col justify-center px-10">
         <div className="text-center mb-10">
-          <h1 className="text-4xl font-black text-white tracking-tighter italic">Multas Rápidas</h1>
-          <p className="text-blue-300 text-[10px] font-bold uppercase tracking-widest mt-2">Versão 2.0 MBFT</p>
+          <h1 className="text-4xl font-black text-white italic tracking-tighter">Multas Rápidas</h1>
+          <p className="text-blue-300 text-[10px] font-bold uppercase tracking-widest mt-2">Agente em Serviço</p>
         </div>
         <div className="bg-white p-8 rounded-[3rem] shadow-2xl space-y-4">
-          <input 
-            type="email" 
-            placeholder="E-mail Funcional" 
-            className="w-full p-5 bg-slate-50 rounded-3xl outline-none font-bold" 
-            id="login-email" 
-          />
-          <button 
-            onClick={() => {
-              const email = (document.getElementById('login-email') as HTMLInputElement).value;
-              if (!email) return;
-              const role = email.toLowerCase().includes('admin') ? UserRole.GESTOR : UserRole.AGENTE;
-              setUser({ id: 'agt-' + Date.now(), name: 'Agente', email, role });
-            }}
-            className="w-full bg-blue-600 text-white py-5 rounded-3xl font-black uppercase shadow-xl"
-          >
-            Entrar
-          </button>
+          <input type="email" placeholder="E-mail Funcional" className="w-full p-5 bg-slate-50 rounded-3xl outline-none font-bold" id="login-email" />
+          <button onClick={() => {
+            const email = (document.getElementById('login-email') as HTMLInputElement).value;
+            if (!email) return;
+            setUser({ id: 'u-' + Date.now(), name: 'Agente', email, role: email.includes('admin') ? UserRole.GESTOR : UserRole.AGENTE });
+          }} className="w-full bg-blue-600 text-white py-5 rounded-3xl font-black uppercase shadow-xl">Entrar</button>
         </div>
       </div>
     );
@@ -297,12 +295,7 @@ export default function App() {
         {activeTab === 'search' && !selectedInfraction && (
           <div className="space-y-4">
             <div className="flex gap-2">
-              <input 
-                className="flex-1 px-5 py-4 bg-white/10 rounded-3xl text-white placeholder-white/40 outline-none font-black text-sm uppercase"
-                placeholder="CÓDIGO (EX: 5010)"
-                value={quickCode}
-                onChange={e => setQuickCode(e.target.value)}
-              />
+              <input className="flex-1 px-5 py-4 bg-white/10 rounded-3xl text-white outline-none font-black text-sm uppercase" placeholder="CÓDIGO" value={quickCode} onChange={e => setQuickCode(e.target.value)} />
               <button onClick={() => {
                 const found = infractions.find(i => i.codigo_enquadramento.replace('-','') === quickCode.replace('-',''));
                 if(found) setSelectedInfraction(found); else alert('Não encontrado');
@@ -310,12 +303,7 @@ export default function App() {
             </div>
             <div className="relative">
               <div className="absolute inset-y-0 left-5 flex items-center text-blue-400"><Icons.Search /></div>
-              <input 
-                className="w-full pl-14 pr-6 py-4 bg-blue-900/40 border border-blue-700/50 rounded-3xl text-white placeholder-blue-300/40 outline-none font-bold text-sm"
-                placeholder="Busca rápida..."
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-              />
+              <input className="w-full pl-14 pr-6 py-4 bg-blue-900/40 border border-blue-700/50 rounded-3xl text-white outline-none font-bold text-sm" placeholder="Buscar..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
             </div>
           </div>
         )}
@@ -323,13 +311,13 @@ export default function App() {
 
       <main className="flex-1 overflow-y-auto px-6 pt-6 pb-40 no-scrollbar">
         {selectedInfraction ? (
-          <div className="bg-white rounded-[3rem] shadow-2xl p-8 border border-slate-100 animate-in slide-in-from-bottom duration-300 mb-10">
+          <div className="bg-white rounded-[3rem] shadow-2xl p-8 border border-slate-100 mb-10">
             <button onClick={() => setSelectedInfraction(null)} className="flex items-center gap-2 text-blue-600 font-black uppercase text-[10px] bg-blue-50 px-5 py-3 rounded-full mb-8"><Icons.ArrowLeft /> Voltar</button>
             
             <div className="flex justify-between items-start mb-6">
               <div className="space-y-1">
                 <NatureTag natureza={selectedInfraction.natureza} />
-                <p className="text-xs font-black text-slate-400 uppercase tracking-widest">Art. {selectedInfraction.artigo}</p>
+                <p className="text-xs font-black text-slate-400 uppercase">Art. {selectedInfraction.artigo}</p>
               </div>
               <span className="text-3xl font-black text-blue-600">{selectedInfraction.codigo_enquadramento}</span>
             </div>
@@ -342,24 +330,20 @@ export default function App() {
 
               <div className="space-y-4">
                 <div className="bg-green-50 p-6 rounded-[2rem] border border-green-100">
-                  <h4 className="text-[10px] font-black text-green-700 uppercase mb-3 tracking-widest">Quando Atuar</h4>
-                  <ul className="text-xs font-bold text-green-900 space-y-2">
-                    {selectedInfraction.quando_atuar?.length ? selectedInfraction.quando_atuar.map((t, i) => <li key={i}>• {t}</li>) : <li className="opacity-40">Nenhuma orientação encontrada</li>}
+                  <h4 className="text-[10px] font-black text-green-700 uppercase mb-3">Quando Atuar</h4>
+                  <ul className="text-xs font-bold text-green-900 space-y-3">
+                    {selectedInfraction.quando_atuar?.length ? selectedInfraction.quando_atuar.map((t, i) => <li key={i}>• {t}</li>) : <li className="opacity-40">Nenhuma orientação disponível</li>}
                   </ul>
                 </div>
                 <div className="bg-red-50 p-6 rounded-[2rem] border border-red-100">
-                  <h4 className="text-[10px] font-black text-red-700 uppercase mb-3 tracking-widest">Não Atuar</h4>
-                  <ul className="text-xs font-bold text-red-900 space-y-2">
-                    {selectedInfraction.quando_nao_atuar?.length ? selectedInfraction.quando_nao_atuar.map((t, i) => <li key={i}>• {t}</li>) : <li className="opacity-40">Nenhuma restrição encontrada</li>}
+                  <h4 className="text-[10px] font-black text-red-700 uppercase mb-3">Não Atuar</h4>
+                  <ul className="text-xs font-bold text-red-900 space-y-3">
+                    {selectedInfraction.quando_nao_atuar?.length ? selectedInfraction.quando_nao_atuar.map((t, i) => <li key={i}>• {t}</li>) : <li className="opacity-40">Nenhuma restrição disponível</li>}
                   </ul>
                 </div>
               </div>
 
-              <button 
-                onClick={() => handleRecord(selectedInfraction)} 
-                disabled={isRecording}
-                className="w-full py-6 bg-blue-600 text-white rounded-[2rem] font-black uppercase text-xs shadow-2xl disabled:bg-slate-300"
-              >
+              <button onClick={() => handleRecord(selectedInfraction)} disabled={isRecording} className="w-full py-6 bg-blue-600 text-white rounded-[2rem] font-black uppercase text-xs shadow-2xl disabled:bg-slate-300">
                 {isRecording ? 'SALVANDO...' : 'REGISTRAR ATUAÇÃO'}
               </button>
             </div>
@@ -369,36 +353,21 @@ export default function App() {
             {activeTab === 'search' && (
               debouncedSearch ? (
                 <div className="space-y-4">
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Resultados ({filteredInfractions.length})</p>
                   {filteredInfractions.map(inf => (
                     <button key={inf.id} onClick={() => setSelectedInfraction(inf)} className="w-full text-left bg-white p-6 rounded-[2.5rem] shadow-md border border-slate-100 flex flex-col gap-2">
                       <div className="flex justify-between items-center">
                         <NatureTag natureza={inf.natureza} />
                         <span className="text-xs font-black text-blue-600">{inf.codigo_enquadramento}</span>
                       </div>
-                      <h3 className="font-black text-slate-800 text-sm leading-tight pr-4">{inf.titulo_curto}</h3>
+                      <h3 className="font-black text-slate-800 text-sm">{inf.titulo_curto}</h3>
                     </button>
                   ))}
                 </div>
               ) : (
                 <div className="space-y-10">
                   <div className="flex flex-col items-center justify-center py-20 opacity-20 text-center">
-                    <Icons.Search />
-                    <p className="font-black text-xs uppercase mt-4 tracking-widest">Pesquise para começar</p>
+                    <Icons.Search /><p className="font-black text-xs uppercase mt-4 tracking-widest">Pesquise para começar</p>
                   </div>
-                  {topInfractions.length > 0 && (
-                    <div className="bg-white rounded-[3rem] p-8 shadow-xl">
-                        <h3 className="text-[10px] font-black text-slate-400 uppercase mb-6 flex items-center gap-2"><Icons.Flash /> Mais Utilizadas</h3>
-                        <div className="space-y-4">
-                            {topInfractions.map(inf => (
-                                <button key={inf.id} onClick={() => setSelectedInfraction(inf)} className="w-full flex justify-between items-center text-left">
-                                    <span className="text-sm font-black text-slate-700 truncate mr-2">{inf.titulo_curto}</span>
-                                    <span className="text-xs font-black text-blue-600 bg-blue-50 px-3 py-1 rounded-xl">{inf.count_atuacoes}</span>
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-                  )}
                 </div>
               )
             )}
@@ -406,30 +375,21 @@ export default function App() {
             {activeTab === 'admin' && user.role === UserRole.GESTOR && (
               <div className="space-y-8">
                 <div className="flex justify-between items-end">
-                  <div className="space-y-1">
-                    <h2 className="text-3xl font-black text-slate-900">Gestão</h2>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase">Configuração da Base</p>
-                  </div>
-                  <button onClick={() => setIsAdminPanelOpen(!isAdminPanelOpen)} className="bg-blue-600 text-white px-6 py-4 rounded-[1.8rem] font-black text-xs uppercase shadow-xl"><Icons.Plus /></button>
+                  <h2 className="text-3xl font-black text-slate-900">Gestão</h2>
+                  <button onClick={() => setIsAdminPanelOpen(!isAdminPanelOpen)} className="bg-blue-600 text-white px-6 py-4 rounded-[1.8rem] font-black text-xs"><Icons.Plus /></button>
                 </div>
 
                 {isAdminPanelOpen && (
                   <div className="bg-white rounded-[3rem] p-8 shadow-2xl border-4 border-blue-50 space-y-6">
-                    <h3 className="text-xs font-black uppercase text-blue-600 flex items-center gap-2"><Icons.Upload /> Importador MBFT</h3>
+                    <h3 className="text-xs font-black text-blue-600 uppercase flex items-center gap-2"><Icons.Upload /> Importar PDF MBFT</h3>
                     <div onClick={() => !isProcessing && fileInputRef.current?.click()} className={`w-full py-12 border-4 border-dashed rounded-[2.5rem] flex flex-col items-center justify-center cursor-pointer ${isProcessing ? 'bg-blue-50 border-blue-200' : 'bg-slate-50 border-slate-100'}`}>
                         {isProcessing ? (
                             <div className="text-center w-full px-10">
-                                <div className="w-full h-3 bg-slate-200 rounded-full overflow-hidden mb-4">
-                                    <div className="h-full bg-blue-600 transition-all duration-300" style={{ width: `${progress}%` }} />
-                                </div>
-                                <p className="text-[10px] font-black uppercase text-blue-600 tracking-widest">{progress}%</p>
-                                <p className="text-[9px] font-bold text-slate-600 mt-2">{batchStatus}</p>
+                                <div className="w-full h-3 bg-slate-200 rounded-full overflow-hidden mb-4"><div className="h-full animate-progress rounded-full" style={{ width: `${progress}%` }} /></div>
+                                <p className="text-[10px] font-black uppercase text-blue-600">{batchStatus}</p>
                             </div>
                         ) : (
-                            <div className="text-center">
-                                <div className="mx-auto w-12 h-12 mb-2 text-slate-300"><Icons.File /></div>
-                                <p className="text-xs font-black uppercase text-slate-400">Selecionar PDF</p>
-                            </div>
+                            <div className="text-center"><Icons.File /><p className="text-xs font-black uppercase text-slate-400 mt-2">Selecionar PDF</p></div>
                         )}
                         <input ref={fileInputRef} type="file" accept=".pdf" className="hidden" onChange={handleFileUpload} disabled={isProcessing} />
                     </div>
@@ -437,7 +397,7 @@ export default function App() {
                 )}
                 
                 <div className="bg-white rounded-[3rem] p-8 shadow-xl border border-slate-100">
-                  <h3 className="text-[10px] font-black text-slate-400 uppercase mb-6 tracking-widest">Base de Dados ({infractions.length})</h3>
+                  <h3 className="text-[10px] font-black text-slate-400 uppercase mb-6 tracking-widest">Base Ativa ({infractions.length})</h3>
                   <div className="space-y-3 max-h-[400px] overflow-y-auto no-scrollbar">
                     {infractions.slice(0, 50).map(inf => (
                       <div key={inf.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-[1.8rem]">

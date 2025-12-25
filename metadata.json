@@ -1,7 +1,5 @@
 {
   "name": "Multas Rápidas",
   "description": "Aplicativo de consulta rápida de infrações de trânsito para agentes de fiscalização.",
-  "requestFramePermissions": [
-    "camera"
-  ]
+  "requestFramePermissions": []
 }

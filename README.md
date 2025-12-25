@@ -1,11 +1,39 @@
-<div align="center">
 
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+# Multas Rápidas - Guia de Configuração Firebase
 
-  <h1>Built with AI Studio</h2>
+Este aplicativo utiliza Firebase Firestore para banco de dados em tempo real e persistência offline.
 
-  <p>The fastest path from prompt to production with Gemini.</p>
+## 🛠 Configuração no Console do Firebase
 
-  <a href="https://aistudio.google.com/apps">Start building</a>
+### 1. Firestore Database
+- Ative o **Firestore Database** no menu "Criação".
+- Vá na aba **Regras** e utilize:
+  ```javascript
+  rules_version = '2';
+  service cloud.firestore {
+    match /databases/{database}/documents {
+      match /{document=**} {
+        allow read, write: if true;
+      }
+    }
+  }
+  ```
+  *(Atenção: Use estas regras apenas para desenvolvimento. Para produção, restrinja o acesso).*
 
-</div>
+### 2. Obter Credenciais
+- Vá em **Configurações do Projeto** -> **Seus aplicativos**.
+- Adicione um aplicativo **Web (</>)**.
+- Copie o objeto `firebaseConfig` para o arquivo `firebase.ts`.
+
+## 📦 Estrutura de Dados (Automática)
+O app criará automaticamente estas coleções no primeiro acesso:
+- `infractions`: Armazena a base de dados de multas.
+- `stats`: Documento `global` com o campo `accessCount`.
+- `audit_logs`: Registros de alterações feitas por gestores.
+
+## 👤 Perfis de Teste
+- **Agente:** Qualquer e-mail.
+- **Gestor:** E-mail contendo a palavra `admin` (ex: `chefe@admin.com`).
+
+---
+*Desenvolvido para Agentes de Fiscalização de Trânsito.*

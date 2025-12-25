@@ -1,8 +1,6 @@
 
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getFirestore, enableIndexedDbPersistence } from 'firebase/firestore';
-// Correctly import getAuth from the modular auth package
-import { getAuth } from 'firebase/auth';
 
 const firebaseConfig = {
   apiKey: "AIzaSyDJhjsrAVo32QYnkCnBSRzrrj5ElVpi8rU",
@@ -18,7 +16,6 @@ const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
 // Get services using modular SDK pattern
 const db = getFirestore(app);
-const auth = getAuth(app);
 
 // Attempt persistence offline if in a browser context
 if (typeof window !== 'undefined') {
@@ -33,4 +30,4 @@ if (typeof window !== 'undefined') {
   });
 }
 
-export { app, db, auth };
+export { app, db };

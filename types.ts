@@ -3,7 +3,8 @@ export enum Natureza {
   LEVE = 'Leve',
   MEDIA = 'Média',
   GRAVE = 'Grave',
-  GRAVISSIMA = 'Gravíssima'
+  GRAVISSIMA = 'Gravíssima',
+  NAO_APLICAVEL = 'Não aplicável'
 }
 
 export enum UserRole {
@@ -21,41 +22,20 @@ export interface User {
 export interface Infraction {
   id: string;
   artigo: string;
-  inciso_alinea?: string;
   codigo_enquadramento: string;
   titulo_curto: string; // Tipificação Resumida
   descricao: string;    // Tipificação do Enquadramento
   natureza: Natureza;
   penalidade: string;
-  pontos: number;
+  pontos: number | string;
   medidas_administrativas: string[];
   quando_atuar: string[];
   quando_nao_atuar: string[];
-  definicoes_procedimentos?: string[]; // Campo "Definições e Procedimentos"
-  exemplos_ait?: string[];            // Campo "Exemplos do Campo de Observações do AIT"
+  definicoes_procedimentos?: string[];
+  exemplos_ait?: string[];
   tags: string[];
   fonte_legal: string;
   ultima_atualizacao: string;
   status: 'ativo' | 'inativo';
-  count_atuacoes?: number;           // Contador para relatórios
-}
-
-export interface InfractionRecord {
-  id: string;
-  infraction_id: string;
-  infraction_title: string;
-  agent_id: string;
-  agent_name: string;
-  criado_em: string;
-}
-
-export interface AuditLog {
-  id: string;
-  admin_id: string;
-  admin_name: string;
-  acao: 'CRIAR' | 'EDITAR' | 'REMOVER';
-  entidade: string;
-  entidade_id: string;
-  detalhes: string;
-  criado_em: string;
+  count_atuacoes?: number;
 }

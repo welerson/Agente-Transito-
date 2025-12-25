@@ -46,6 +46,9 @@ const NatureTag: React.FC<{ natureza: Natureza }> = ({ natureza }) => {
   return <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase border border-current/10 ${colors[natureza] || colors[Natureza.NAO_APLICAVEL]}`}>{natureza}</span>;
 };
 
+// Utilitário para pausa
+const yieldToBrowser = () => new Promise(resolve => setTimeout(resolve, 10));
+
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [activeTab, setActiveTab] = useState<'search' | 'history' | 'admin'>('search');
@@ -93,7 +96,7 @@ export default function App() {
       .slice(0, 10);
   }, [infractions]);
 
-  // PARSER SISTÊMICO REFINADO (PROCESSAMENTO LOCAL)
+  // PARSER SISTÊMICO REFINADO
   const parseManualText = (text: string): Partial<Infraction> | null => {
     try {
       const clean = (str: string) => str ? str.trim().replace(/\s+/g, ' ') : '';
@@ -121,15 +124,29 @@ export default function App() {
       else if (grav.includes('não aplicável')) result.natureza = Natureza.NAO_APLICAVEL;
       else result.natureza = Natureza.MEDIA;
 
-      // Extração de Bullets
-      const sections = text.split(/Quando AUTUAR|Quando NÃO Autuar|Definições e Procedimentos|Exemplos do Campo/i);
-      if (sections.length >= 3) {
-        result.quando_atuar = sections[1].split('\n').map(s => s.trim()).filter(s => s.length > 5).map(s => s.replace(/^\d+\.\s*/, ''));
-        result.quando_nao_atuar = sections[2].split('\n').map(s => s.trim()).filter(s => s.length > 5).map(s => s.replace(/^\d+\.\s*/, ''));
+      if (!result.codigo_enquadramento) return null;
+      
+      // Se não tem título curto, tenta pegar o Amparo Legal ou início da Descrição
+      if (!result.titulo_curto) {
+        result.titulo_curto = result.descricao ? result.descricao.substring(0, 80) : `Infração ${result.codigo_enquadramento}`;
       }
 
-      if (!result.codigo_enquadramento) return null;
-      if (!result.titulo_curto && result.descricao) result.titulo_curto = result.descricao.substring(0, 80);
+      // Extração de Bullets para atuar e não atuar
+      const atuarBlock = text.split(/Quando AUTUAR|Quando AUTUAR:|Quando AUTUAR -/i)[1];
+      const naoAtuarBlock = text.split(/Quando NÃO Autuar|Quando NÃO Autuar:|Quando NÃO Autuar -/i)[1];
+      
+      if (atuarBlock) {
+        result.quando_atuar = atuarBlock.split('\n')
+          .map(s => s.trim())
+          .filter(s => s.length > 5 && !s.includes('Quando NÃO Autuar'))
+          .slice(0, 5);
+      }
+      if (naoAtuarBlock) {
+        result.quando_nao_atuar = naoAtuarBlock.split('\n')
+          .map(s => s.trim())
+          .filter(s => s.length > 5 && !s.includes('Definições e Procedimentos'))
+          .slice(0, 5);
+      }
 
       return result;
     } catch (e) {
@@ -138,15 +155,19 @@ export default function App() {
   };
 
   const handleBulkImport = async (text: string) => {
-    // Divide o texto gigante em blocos
+    // Divide o texto gigante em blocos usando um split que não trave
     const blocks = text.split(/Tipificação Resumida:/i).filter(b => b.length > 50);
     let currentBatch = writeBatch(db);
     let countInBatch = 0;
     let totalImported = 0;
 
-    setBatchStatus('Salvando no banco de dados...');
-
     for (let i = 0; i < blocks.length; i++) {
+      // A cada 10 blocos processados, damos uma pausa para o navegador respirar
+      if (i % 10 === 0) {
+        await yieldToBrowser();
+        setBatchStatus(`Analisando ficha ${i + 1} de ${blocks.length}...`);
+      }
+
       const fullText = `Tipificação Resumida: ${blocks[i]}`;
       const parsed = parseManualText(fullText);
       
@@ -158,59 +179,62 @@ export default function App() {
           status: 'ativo',
           ultima_atualizacao: new Date().toISOString(),
           fonte_legal: parsed.artigo || 'Manual MBFT',
-          tags: [parsed.codigo_enquadramento]
+          tags: [parsed.codigo_enquadramento, parsed.artigo || '']
         }, { merge: true });
         
         countInBatch++;
         totalImported++;
 
-        // Firestore limita batches a 500 operações. Usamos 400 por segurança.
         if (countInBatch >= 400) {
+          setBatchStatus(`Salvando lote de 400 itens...`);
           await currentBatch.commit();
+          await yieldToBrowser();
           currentBatch = writeBatch(db);
           countInBatch = 0;
-          setBatchStatus(`Enviados ${totalImported} de ${blocks.length}...`);
         }
       }
     }
     
-    // Comita o resto
     if (countInBatch > 0) {
       await currentBatch.commit();
     }
     
-    setBatchStatus('');
     return totalImported;
   };
 
   const processPDF = async (file: File) => {
     setIsProcessing(true);
     setProgress(0);
-    setBatchStatus('Lendo arquivo PDF...');
+    setBatchStatus('Carregando PDF...');
     try {
       const arrayBuffer = await file.arrayBuffer();
       const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-      let fullText = '';
+      let fullTextAccumulator = '';
       
       const numPages = pdf.numPages;
       for (let i = 1; i <= numPages; i++) {
         const page = await pdf.getPage(i);
         const textContent = await page.getTextContent();
-        // Preserva a estrutura básica de linhas
         const pageText = textContent.items.map((item: any) => item.str).join(' ');
-        fullText += `\n Tipificação Resumida: ` + pageText; 
         
-        if (i % 10 === 0 || i === numPages) {
+        // Acumula o texto
+        fullTextAccumulator += `\n Tipificação Resumida: ` + pageText; 
+        
+        // Pausa a cada página para não travar a UI
+        if (i % 5 === 0 || i === numPages) {
           setProgress(Math.round((i / numPages) * 100));
+          setBatchStatus(`Extraindo texto: página ${i} de ${numPages}...`);
+          await yieldToBrowser();
         }
       }
 
-      const importedCount = await handleBulkImport(fullText);
-      alert(`Importação concluída! ${importedCount} infrações processadas com sucesso.`);
+      setBatchStatus('Processando fichas técnicas encontradas...');
+      const importedCount = await handleBulkImport(fullTextAccumulator);
+      alert(`Sucesso! ${importedCount} infrações importadas para a base de dados.`);
       setIsAdminPanelOpen(false);
     } catch (e) {
       console.error(e);
-      alert('Erro ao processar PDF. O arquivo pode ser muito complexo ou estar corrompido.');
+      alert('Erro ao processar o arquivo. Tente um arquivo menor ou verifique se o PDF está legível.');
     } finally {
       setIsProcessing(false);
       setProgress(0);
@@ -221,7 +245,6 @@ export default function App() {
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
     if (file.type === 'application/pdf') {
       processPDF(file);
     } else {
@@ -230,7 +253,7 @@ export default function App() {
         setIsProcessing(true);
         const importedCount = await handleBulkImport(event.target?.result as string);
         setIsProcessing(false);
-        alert(`${importedCount} infrações encontradas e importadas.`);
+        alert(`${importedCount} infrações importadas.`);
       };
       reader.readAsText(file);
     }
@@ -306,16 +329,22 @@ export default function App() {
                 placeholder="CÓDIGO (EX: 501-00)"
                 value={quickCode}
                 onChange={e => setQuickCode(e.target.value)}
+                onKeyPress={(e) => {
+                    if(e.key === 'Enter') {
+                        const found = infractions.find(i => i.codigo_enquadramento === quickCode);
+                        if(found) handleRecord(found); else alert('Código não encontrado');
+                    }
+                }}
               />
               <button onClick={() => {
                 const found = infractions.find(i => i.codigo_enquadramento === quickCode);
                 if(found) handleRecord(found); else alert('Não encontrado');
-              }} className="bg-orange-500 text-white px-6 rounded-3xl font-black text-xs btn-active shadow-lg shadow-orange-500/30">OK</button>
+              }} className="bg-orange-500 text-white px-6 rounded-3xl font-black text-xs btn-active shadow-lg shadow-orange-500/30 transition-transform active:scale-95 uppercase">Buscar</button>
             </div>
             <div className="relative">
               <div className="absolute inset-y-0 left-5 flex items-center text-blue-400 transition-colors"><Icons.Search /></div>
               <input 
-                className="w-full pl-14 pr-6 py-4 bg-blue-900/40 border border-blue-700/50 rounded-3xl text-white placeholder-blue-300/40 outline-none font-bold text-sm"
+                className="w-full pl-14 pr-6 py-4 bg-blue-900/40 border border-blue-700/50 rounded-3xl text-white placeholder-blue-300/40 outline-none font-bold text-sm focus:ring-2 focus:ring-blue-400"
                 placeholder="Nome da infração ou artigo..."
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
@@ -331,7 +360,7 @@ export default function App() {
             <div className="flex justify-between items-center mb-8">
               <button onClick={() => setSelectedInfraction(null)} className="flex items-center gap-2 text-blue-600 font-black uppercase text-[10px] bg-blue-50 px-5 py-3 rounded-full btn-active transition-all"><Icons.ArrowLeft /> Voltar</button>
               {user.role === UserRole.GESTOR && (
-                <button onClick={() => { if(confirm(`Excluir ${selectedInfraction.codigo_enquadramento}?`)) deleteDoc(doc(db, 'infractions', selectedInfraction.id)).then(() => setSelectedInfraction(null)); }} className="text-red-500 p-3 bg-red-50 rounded-2xl btn-active"><Icons.Trash /></button>
+                <button onClick={() => { if(confirm('Excluir?')) deleteDoc(doc(db, 'infractions', selectedInfraction.id)).then(() => setSelectedInfraction(null)); }} className="text-red-500 p-3 bg-red-50 rounded-2xl btn-active"><Icons.Trash /></button>
               )}
             </div>
             
@@ -354,11 +383,11 @@ export default function App() {
               <div className="space-y-4">
                 <div className="bg-green-50 p-6 rounded-[2rem] border border-green-100">
                   <h4 className="text-[10px] font-black text-green-700 uppercase mb-3 tracking-widest">Quando Atuar</h4>
-                  <ul className="text-xs font-bold text-green-900 space-y-2">{selectedInfraction.quando_atuar.map((t, idx) => <li key={idx}>• {t}</li>)}</ul>
+                  <ul className="text-xs font-bold text-green-900 space-y-2">{selectedInfraction.quando_atuar?.map((t, idx) => <li key={idx}>• {t}</li>) || <li>Informação não disponível</li>}</ul>
                 </div>
                 <div className="bg-red-50 p-6 rounded-[2rem] border border-red-100">
                   <h4 className="text-[10px] font-black text-red-700 uppercase mb-3 tracking-widest">Não Atuar</h4>
-                  <ul className="text-xs font-bold text-red-900 space-y-2">{selectedInfraction.quando_nao_atuar.map((t, idx) => <li key={idx}>• {t}</li>)}</ul>
+                  <ul className="text-xs font-bold text-red-900 space-y-2">{selectedInfraction.quando_nao_atuar?.map((t, idx) => <li key={idx}>• {t}</li>) || <li>Informação não disponível</li>}</ul>
                 </div>
               </div>
 
@@ -425,8 +454,8 @@ export default function App() {
                 {isAdminPanelOpen && (
                   <div className="bg-white rounded-[3rem] p-8 shadow-2xl border-4 border-blue-50 space-y-6">
                     <div className="space-y-2">
-                        <h3 className="text-xs font-black uppercase text-blue-600 flex items-center gap-2"><Icons.Upload /> Importador Massivo</h3>
-                        <p className="text-[11px] text-slate-400 font-medium leading-relaxed">Suporta arquivos PDF de centenas de páginas. O sistema irá extrair e salvar em lotes no banco de dados.</p>
+                        <h3 className="text-xs font-black uppercase text-blue-600 flex items-center gap-2"><Icons.Upload /> Importador de Lote Seguro</h3>
+                        <p className="text-[11px] text-slate-400 font-medium leading-relaxed">Agora processa arquivos grandes sem travar o navegador. O sistema processa o PDF em pedaços pequenos.</p>
                     </div>
                     
                     <div className="space-y-4">
@@ -436,7 +465,7 @@ export default function App() {
                                     <div className="w-full h-3 bg-slate-200 rounded-full overflow-hidden mb-4 border border-slate-100">
                                         <div className="h-full animate-progress rounded-full transition-all duration-300" style={{ width: `${progress}%` }} />
                                     </div>
-                                    <p className="text-[10px] font-black uppercase text-blue-600 tracking-[0.2em]">{progress}% Processado</p>
+                                    <p className="text-[10px] font-black uppercase text-blue-600 tracking-[0.2em]">{progress}% Extraído</p>
                                     <p className="text-[9px] font-bold text-slate-600 mt-2 italic">{batchStatus}</p>
                                 </div>
                             ) : (
@@ -457,13 +486,12 @@ export default function App() {
                                  onChange={(e) => setImportText(e.target.value)}
                                />
                                <button 
-                                 onClick={() => {
+                                 onClick={async () => {
                                    setIsProcessing(true);
-                                   handleBulkImport(importText).then(c => {
-                                     setIsProcessing(false);
-                                     alert(`${c} multas importadas!`);
-                                     setImportText('');
-                                   });
+                                   const count = await handleBulkImport(importText);
+                                   setIsProcessing(false);
+                                   alert(`${count} multas importadas!`);
+                                   setImportText('');
                                  }}
                                  disabled={!importText.trim()}
                                  className="absolute bottom-4 right-4 bg-slate-900 text-white px-6 py-3 rounded-full font-black text-[10px] uppercase shadow-xl disabled:opacity-30"

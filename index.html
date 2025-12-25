@@ -10,6 +10,8 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <!-- PDF.js para processamento de arquivos pesados -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <style>
         body { 
             font-family: 'Inter', sans-serif; 
@@ -21,6 +23,16 @@
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         .btn-active:active { transform: scale(0.96); opacity: 0.9; }
+        
+        @keyframes progress-slow {
+            0% { background-position: 0% 50%; }
+            100% { background-position: 100% 50%; }
+        }
+        .animate-progress {
+            background: linear-gradient(90deg, #3b82f6, #60a5fa, #3b82f6);
+            background-size: 200% 200%;
+            animation: progress-slow 2s linear infinite;
+        }
     </style>
     <!-- PWA iOS Support -->
     <meta name="apple-mobile-web-app-capable" content="yes">

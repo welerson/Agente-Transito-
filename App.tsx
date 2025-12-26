@@ -102,53 +102,65 @@ export default function App() {
       .slice(0, 10);
   }, [infractions]);
 
-  // MOTOR DE PARSE REFORMULADO 2025
+  // SUPER PARSER MBFT - RESILIENTE A FALHAS DE OCR
   const parseManualText = (rawText: string): Partial<Infraction> | null => {
     try {
-      // Normalização inicial: remove espaços excessivos mas mantém parágrafos
+      // Normalização: remove espaços excessivos mas mantém parágrafos
       const content = rawText.replace(/[ \t]+/g, ' ').replace(/\r\n/g, '\n');
       
       const sections: Record<string, string> = {};
-      const headers = [
-        { key: 'titulo_curto', label: 'Tipificação Resumida' },
-        { key: 'codigo_enquadramento', label: 'Código do Enquadramento' },
-        { key: 'artigo', label: 'Amparo Legal' },
-        { key: 'descricao', label: 'Tipificação do Enquadramento' },
-        { key: 'gravidade', label: 'Gravidade' },
-        { key: 'penalidade', label: 'Penalidade' },
-        { key: 'medida_admin', label: 'Medida Administrativa' },
-        { key: 'quando_atuar', label: 'QUANDO AUTUAR' },
-        { key: 'quando_nao_atuar', label: 'QUANDO NÃO AUTUAR' },
-        { key: 'definicoes', label: 'DEFINIÇÕES E PROCEDIMENTOS' },
-        { key: 'exemplos', label: 'EXEMPLOS DE AIT' }
+      
+      // Definição de cabeçalhos com Regex para maior flexibilidade (suporta variações de acento, caixa e pontuação)
+      const headerPatterns = [
+        { key: 'titulo_curto', regex: /Tipifica[çc][ãa]o\s+Resumida/i },
+        { key: 'codigo_enquadramento', regex: /C[óo]digo\s+do\s+Enquadramento/i },
+        { key: 'artigo', regex: /Amparo\s+Legal/i },
+        { key: 'descricao', regex: /Tipifica[çc][ãa]o\s+do\s+Enquadramento/i },
+        { key: 'gravidade', regex: /Gravidade/i },
+        { key: 'penalidade', regex: /Penalidade/i },
+        { key: 'medida_admin', regex: /Medida\s+Administrativa/i },
+        { key: 'quando_atuar', regex: /QUANDO\s+AUTUAR/i },
+        { key: 'quando_nao_atuar', regex: /QUANDO\s+N[ÃA]O\s+AUTUAR/i },
+        { key: 'definicoes', regex: /DEFINI[ÇC][ÕO]ES\s+E\s+PROCEDIMENTOS/i },
+        { key: 'exemplos', regex: /EXEMPLOS\s+DE\s+AIT/i }
       ];
 
-      // Localiza todos os índices dos cabeçalhos
-      const markers = headers.map(h => ({
-        ...h,
-        index: content.toUpperCase().indexOf(h.label.toUpperCase())
-      })).filter(m => m.index !== -1).sort((a, b) => a.index - b.index);
+      // Encontrar a posição de cada cabeçalho no texto
+      const markers = headerPatterns.map(h => {
+        const match = content.match(h.regex);
+        return {
+          key: h.key,
+          label: match ? match[0] : null,
+          index: match ? match.index : -1
+        };
+      }).filter(m => m.index !== -1).sort((a, b) => a.index - b.index);
 
-      // Extrai o conteúdo entre os marcadores
+      // Extrair o texto entre um cabeçalho e o próximo
       markers.forEach((marker, i) => {
-        const start = marker.index + marker.label.length;
-        const end = (i + 1 < markers.length) ? markers[i+1].index : content.length;
-        let segment = content.substring(start, end).trim();
+        const start = marker.index! + marker.label!.length;
+        const nextMarker = markers[i + 1];
+        const end = nextMarker ? nextMarker.index : content.length;
         
-        // Limpa o caractere ":" inicial se houver
-        if (segment.startsWith(':')) segment = segment.substring(1).trim();
+        let segment = content.substring(start, end).trim();
+        // Limpar prefixos comuns como ":" ou "-" que ficam após o cabeçalho
+        segment = segment.replace(/^[:\-\s\.]+/g, '').trim();
         sections[marker.key] = segment;
       });
 
       if (!sections.codigo_enquadramento) return null;
 
-      // Processamento de listas para 'Quando Atuar' e 'Não Atuar'
+      // PROCESSADOR DE LISTAS INTELIGENTE
+      // Identifica itens por quebra de linha OU por numeração (1., 2., a), b))
       const processList = (text: string) => {
         if (!text) return [];
-        return text
-          .split(/\n|(?=\d+[\s\.)-])/) // Divide por nova linha ou por números de lista
-          .map(line => line.trim().replace(/^\d+[\s\.)-]*|^[•\-\*]\s*/, ''))
-          .filter(line => line.length > 10)
+        
+        // 1. Tenta quebrar por números/letras de lista MBFT: "1. ", "2) ", "a. "
+        const items = text.split(/\n|(?=[a-z\d][\.\)\-]\s+[A-Z\d])/);
+        
+        return items
+          .map(item => item.trim())
+          .map(item => item.replace(/^[a-z\d][\.\)\-]\s*/i, '')) // Remove o número/letra inicial
+          .filter(item => item.length > 8) // Filtra fragmentos irrelevantes
           .slice(0, 15);
       };
 
@@ -156,7 +168,7 @@ export default function App() {
         id: sections.codigo_enquadramento.match(/[\d-]+/)?.[0] || sections.codigo_enquadramento,
         codigo_enquadramento: sections.codigo_enquadramento.match(/[\d-]+/)?.[0] || sections.codigo_enquadramento,
         artigo: sections.artigo?.split('\n')[0].trim() || '',
-        titulo_curto: sections.titulo_curto?.split('\n')[0].trim() || 'Multa ' + sections.codigo_enquadramento,
+        titulo_curto: sections.titulo_curto?.split('\n')[0].trim() || 'Ficha ' + sections.codigo_enquadramento,
         descricao: sections.descricao?.replace(/\n/g, ' ').trim() || '',
         quando_atuar: processList(sections.quando_atuar),
         quando_nao_atuar: processList(sections.quando_nao_atuar),
@@ -164,24 +176,25 @@ export default function App() {
         medidas_administrativas: sections.medida_admin ? [sections.medida_admin.split('\n')[0].trim()] : []
       };
 
-      // Natureza
+      // Detecção de Gravidade para o enum Natureza
       const grav = (sections.gravidade || '').toLowerCase();
       if (grav.includes('leve')) result.natureza = Natureza.LEVE;
-      else if (grav.includes('grave')) result.natureza = Natureza.GRAVE;
+      else if (grav.includes('grave') && !grav.includes('gravíssima')) result.natureza = Natureza.GRAVE;
       else if (grav.includes('gravíssima')) result.natureza = Natureza.GRAVISSIMA;
-      else if (grav.includes('não aplicável')) result.natureza = Natureza.NAO_APLICAVEL;
+      else if (grav.includes('méd')) result.natureza = Natureza.MEDIA;
+      else if (grav.includes('não aplicável') || grav.includes('n/a')) result.natureza = Natureza.NAO_APLICAVEL;
       else result.natureza = Natureza.MEDIA;
 
       return result;
     } catch (e) {
-      console.error("Erro no parser:", e);
+      console.error("Falha ao analisar bloco de texto:", e);
       return null;
     }
   };
 
   const handleBulkImport = async (text: string) => {
-    // Divide por "Tipificação Resumida" que é o início padrão de cada ficha
-    const blocks = text.split(/Tipificação Resumida/i).filter(b => b.length > 50);
+    // Divisor padrão de fichas MBFT
+    const blocks = text.split(/Tipifica[çc][ãa]o\s+Resumida/i).filter(b => b.length > 100);
     let currentBatch = writeBatch(db);
     let countInBatch = 0;
     let totalImported = 0;
@@ -189,8 +202,9 @@ export default function App() {
     for (let i = 0; i < blocks.length; i++) {
       if (i % 20 === 0) {
         await yieldToBrowser();
-        setBatchStatus(`Salvando: Ficha ${i + 1} de ${blocks.length}...`);
+        setBatchStatus(`Importando: ${i + 1} de ${blocks.length}...`);
       }
+      
       const fullText = `Tipificação Resumida ${blocks[i]}`;
       const parsed = parseManualText(fullText);
       
@@ -207,6 +221,7 @@ export default function App() {
         countInBatch++;
         totalImported++;
 
+        // Firebase batches limit is 500
         if (countInBatch >= 450) {
           await currentBatch.commit();
           await yieldToBrowser();
@@ -215,6 +230,7 @@ export default function App() {
         }
       }
     }
+    
     if (countInBatch > 0) await currentBatch.commit();
     return totalImported;
   };
@@ -222,7 +238,7 @@ export default function App() {
   const processPDF = async (file: File) => {
     setIsProcessing(true);
     setProgress(0);
-    setBatchStatus('Iniciando leitura profunda do PDF...');
+    setBatchStatus('Lendo arquivo PDF...');
     try {
       const arrayBuffer = await file.arrayBuffer();
       const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
@@ -232,24 +248,27 @@ export default function App() {
         const page = await pdf.getPage(i);
         const textContent = await page.getTextContent();
         
-        // IMPORTANTE: Join com \n para que o parser identifique quebras de linha entre tópicos
-        const pageText = textContent.items.map((item: any) => item.str).join('\n');
+        // Join items with '\n' to keep structure, but avoid double spaces
+        const pageText = textContent.items
+          .map((item: any) => item.str)
+          .join('\n');
+          
         fullText += `\n\nTIPIFICAÇÃO RESUMIDA\n` + pageText; 
         
         if (i % 10 === 0 || i === pdf.numPages) {
           setProgress(Math.round((i / pdf.numPages) * 100));
-          setBatchStatus(`Capturando texto: página ${i} de ${pdf.numPages}...`);
+          setBatchStatus(`Lendo página ${i} de ${pdf.numPages}...`);
           await yieldToBrowser();
         }
       }
 
-      setBatchStatus('Processando e estruturando as fichas...');
+      setBatchStatus('Identificando informações das fichas...');
       const importedCount = await handleBulkImport(fullText);
-      alert(`Sucesso! ${importedCount} fichas importadas com todas as orientações técnicas.`);
+      alert(`CONCLUÍDO: ${importedCount} infrações cadastradas com sucesso!`);
       setIsAdminPanelOpen(false);
     } catch (e) {
       console.error(e);
-      alert('Erro ao processar PDF.');
+      alert('ERRO: O arquivo pode estar protegido ou corrompido.');
     } finally {
       setIsProcessing(false);
       setProgress(0);
@@ -268,9 +287,9 @@ export default function App() {
     try {
       const infRef = doc(db, 'infractions', inf.id);
       await updateDoc(infRef, { count_atuacoes: increment(1) });
-      alert(`Registrado com sucesso em ${inf.codigo_enquadramento}`);
+      alert(`Registrado: ${inf.codigo_enquadramento}`);
       setQuickCode('');
-    } catch (e) { alert('Erro ao salvar'); } finally { setIsRecording(false); }
+    } catch (e) { alert('Erro ao registrar'); } finally { setIsRecording(false); }
   };
 
   if (!user) {
@@ -278,15 +297,15 @@ export default function App() {
       <div className="min-h-screen bg-blue-900 flex flex-col justify-center px-10">
         <div className="text-center mb-10">
           <h1 className="text-4xl font-black text-white italic tracking-tighter">Multas Rápidas</h1>
-          <p className="text-blue-300 text-[10px] font-bold uppercase tracking-widest mt-2">Plataforma do Agente</p>
+          <p className="text-blue-300 text-[10px] font-bold uppercase tracking-widest mt-2">Acesso Restrito ao Agente</p>
         </div>
         <div className="bg-white p-8 rounded-[3rem] shadow-2xl space-y-4 border-b-8 border-blue-100">
-          <input type="email" placeholder="E-mail Funcional" className="w-full p-5 bg-slate-50 rounded-3xl outline-none font-bold" id="login-email" />
+          <input type="email" placeholder="E-mail Funcional" className="w-full p-5 bg-slate-50 rounded-3xl outline-none font-bold text-slate-700" id="login-email" />
           <button onClick={() => {
             const email = (document.getElementById('login-email') as HTMLInputElement).value;
             if (!email) return;
-            setUser({ id: 'agt-' + Date.now(), name: 'Agente Silva', email, role: email.includes('admin') ? UserRole.GESTOR : UserRole.AGENTE });
-          }} className="w-full bg-blue-600 text-white py-5 rounded-3xl font-black uppercase shadow-xl btn-active">Entrar</button>
+            setUser({ id: 'agt-' + Date.now(), name: 'Agente', email, role: email.includes('admin') ? UserRole.GESTOR : UserRole.AGENTE });
+          }} className="w-full bg-blue-600 text-white py-5 rounded-3xl font-black uppercase shadow-xl btn-active">Acessar Sistema</button>
         </div>
       </div>
     );
@@ -300,21 +319,22 @@ export default function App() {
             <h1 className="text-xl font-black italic">Multas Rápidas</h1>
             <span className="text-[9px] font-bold text-blue-300 uppercase">{user.role}</span>
           </div>
-          <button onClick={() => setUser(null)} className="p-2 opacity-50"><Icons.Logout /></button>
+          <button onClick={() => setUser(null)} className="p-2 opacity-50 hover:opacity-100 transition-opacity"><Icons.Logout /></button>
         </div>
 
         {activeTab === 'search' && !selectedInfraction && (
-          <div className="space-y-4">
+          <div className="space-y-4 animate-in fade-in slide-in-from-top-4 duration-300">
             <div className="flex gap-2">
-              <input className="flex-1 px-5 py-4 bg-white/10 rounded-3xl text-white outline-none font-black text-sm uppercase" placeholder="CÓDIGO (EX: 5010)" value={quickCode} onChange={e => setQuickCode(e.target.value)} />
+              <input className="flex-1 px-5 py-4 bg-white/10 rounded-3xl text-white outline-none font-black text-sm uppercase placeholder-white/30" placeholder="CÓDIGO (EX: 5010)" value={quickCode} onChange={e => setQuickCode(e.target.value)} />
               <button onClick={() => {
-                const found = infractions.find(i => i.codigo_enquadramento.replace('-','') === quickCode.replace('-',''));
-                if(found) setSelectedInfraction(found); else alert('Cód. não encontrado');
-              }} className="bg-orange-500 text-white px-6 rounded-3xl font-black text-xs btn-active shadow-lg">BUSCAR</button>
+                const search = quickCode.replace(/[^0-9]/g, '');
+                const found = infractions.find(i => i.codigo_enquadramento.replace(/[^0-9]/g, '') === search);
+                if(found) setSelectedInfraction(found); else alert('Infração não localizada');
+              }} className="bg-orange-500 text-white px-6 rounded-3xl font-black text-xs btn-active shadow-lg">EXIBIR</button>
             </div>
             <div className="relative">
               <div className="absolute inset-y-0 left-5 flex items-center text-blue-400"><Icons.Search /></div>
-              <input className="w-full pl-14 pr-6 py-4 bg-blue-900/40 border border-blue-700/50 rounded-3xl text-white outline-none font-bold text-sm" placeholder="O que aconteceu? (ex: celular, faixa...)" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
+              <input className="w-full pl-14 pr-6 py-4 bg-blue-900/40 border border-blue-700/50 rounded-3xl text-white outline-none font-bold text-sm placeholder-blue-300/40" placeholder="Filtrar por nome ou artigo..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
             </div>
           </div>
         )}
@@ -335,27 +355,36 @@ export default function App() {
 
             <div className="space-y-8">
               <h3 className="text-2xl font-black text-slate-900 leading-tight">{selectedInfraction.titulo_curto}</h3>
-              <div className="p-6 bg-slate-900 rounded-[2.5rem]">
+              <div className="p-6 bg-slate-900 rounded-[2.5rem] border-b-4 border-blue-950">
                 <p className="text-sm text-blue-100 italic leading-relaxed">"{selectedInfraction.descricao}"</p>
               </div>
 
               <div className="space-y-4">
                 <div className="bg-green-50 p-6 rounded-[2rem] border border-green-100">
-                  <h4 className="text-[10px] font-black text-green-700 uppercase mb-4 tracking-widest">Quando Atuar</h4>
+                  <h4 className="text-[10px] font-black text-green-700 uppercase mb-4 tracking-widest flex items-center gap-2">
+                    <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" /> Quando Atuar
+                  </h4>
                   <ul className="text-xs font-bold text-green-900 space-y-3">
-                    {selectedInfraction.quando_atuar?.length ? selectedInfraction.quando_atuar.map((t, i) => <li key={i} className="flex gap-2"><span>•</span> <span>{t}</span></li>) : <li className="opacity-40 italic">Informação indisponível nesta ficha</li>}
+                    {selectedInfraction.quando_atuar?.length ? selectedInfraction.quando_atuar.map((t, i) => <li key={i} className="flex gap-2 leading-relaxed"><span>•</span> <span>{t}</span></li>) : <li className="opacity-40 italic">Nenhuma orientação específica encontrada no manual</li>}
                   </ul>
                 </div>
                 <div className="bg-red-50 p-6 rounded-[2rem] border border-red-100">
-                  <h4 className="text-[10px] font-black text-red-700 uppercase mb-4 tracking-widest">Não Atuar</h4>
+                  <h4 className="text-[10px] font-black text-red-700 uppercase mb-4 tracking-widest flex items-center gap-2">
+                    <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse" /> Quando Não Atuar
+                  </h4>
                   <ul className="text-xs font-bold text-red-900 space-y-3">
-                    {selectedInfraction.quando_nao_atuar?.length ? selectedInfraction.quando_nao_atuar.map((t, i) => <li key={i} className="flex gap-2"><span>•</span> <span>{t}</span></li>) : <li className="opacity-40 italic">Restrições não informadas</li>}
+                    {selectedInfraction.quando_nao_atuar?.length ? selectedInfraction.quando_nao_atuar.map((t, i) => <li key={i} className="flex gap-2 leading-relaxed"><span>•</span> <span>{t}</span></li>) : <li className="opacity-40 italic">Restrições não informadas nesta ficha</li>}
                   </ul>
                 </div>
               </div>
 
+              <div className="bg-slate-50 p-6 rounded-[2rem] border border-slate-100">
+                <h4 className="text-[10px] font-black text-slate-500 uppercase mb-2">Penalidade</h4>
+                <p className="text-xs font-black text-slate-900 uppercase">{selectedInfraction.penalidade || 'Consultar CTB'}</p>
+              </div>
+
               <button onClick={() => handleRecord(selectedInfraction)} disabled={isRecording} className="w-full py-6 bg-blue-600 text-white rounded-[2rem] font-black uppercase text-xs btn-active shadow-2xl disabled:bg-slate-300">
-                {isRecording ? 'SALVANDO...' : 'REGISTRAR ATUAÇÃO'}
+                {isRecording ? 'PROCESSANDO...' : 'REGISTRAR ATUAÇÃO'}
               </button>
             </div>
           </div>
@@ -363,7 +392,7 @@ export default function App() {
           <div className="space-y-6">
             {activeTab === 'search' && (
               debouncedSearch ? (
-                <div className="space-y-4">
+                <div className="space-y-4 animate-in fade-in duration-300">
                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Resultados ({filteredInfractions.length})</p>
                   {filteredInfractions.map(inf => (
                     <button key={inf.id} onClick={() => setSelectedInfraction(inf)} className="w-full text-left bg-white p-6 rounded-[2.5rem] shadow-md border border-slate-100 flex flex-col gap-2 btn-active">
@@ -378,11 +407,11 @@ export default function App() {
               ) : (
                 <div className="space-y-10">
                   <div className="flex flex-col items-center justify-center py-20 opacity-20 text-center text-slate-400">
-                    <Icons.Search /><p className="font-black text-xs uppercase mt-4 tracking-widest">Digite para pesquisar</p>
+                    <Icons.Search /><p className="font-black text-xs uppercase mt-4 tracking-widest">Digite uma palavra-chave</p>
                   </div>
                   {topInfractions.length > 0 && (
-                    <div className="bg-white rounded-[3rem] p-8 shadow-xl border border-slate-100">
-                        <h3 className="text-[10px] font-black text-slate-400 uppercase mb-6 flex items-center gap-2 tracking-widest"><Icons.Flash /> Fichas Recentes</h3>
+                    <div className="bg-white rounded-[3rem] p-8 shadow-xl border border-slate-100 animate-in slide-in-from-bottom duration-500">
+                        <h3 className="text-[10px] font-black text-slate-400 uppercase mb-6 flex items-center gap-2 tracking-widest"><Icons.Flash /> Mais Utilizadas</h3>
                         <div className="space-y-4">
                             {topInfractions.map(inf => (
                                 <button key={inf.id} onClick={() => setSelectedInfraction(inf)} className="w-full flex justify-between items-center text-left btn-active">
@@ -402,14 +431,14 @@ export default function App() {
                 <div className="flex justify-between items-end">
                   <div className="space-y-1">
                     <h2 className="text-3xl font-black text-slate-900 tracking-tighter">Gestão</h2>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Controle MBFT</p>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Configurações MBFT</p>
                   </div>
                   <button onClick={() => setIsAdminPanelOpen(!isAdminPanelOpen)} className="bg-blue-600 text-white px-6 py-4 rounded-[1.8rem] font-black text-xs uppercase shadow-xl btn-active"><Icons.Plus /></button>
                 </div>
 
                 {isAdminPanelOpen && (
                   <div className="bg-white rounded-[3rem] p-8 shadow-2xl border-4 border-blue-50 space-y-6">
-                    <h3 className="text-xs font-black text-blue-600 uppercase flex items-center gap-2 tracking-widest"><Icons.Upload /> Carregar Manual MBFT</h3>
+                    <h3 className="text-xs font-black text-blue-600 uppercase flex items-center gap-2 tracking-widest"><Icons.Upload /> Carregar Novo Manual PDF</h3>
                     <div onClick={() => !isProcessing && fileInputRef.current?.click()} className={`w-full py-12 border-4 border-dashed rounded-[2.5rem] flex flex-col items-center justify-center cursor-pointer transition-all ${isProcessing ? 'bg-blue-50 border-blue-200' : 'bg-slate-50 border-slate-100 hover:border-blue-200'}`}>
                         {isProcessing ? (
                             <div className="text-center w-full px-10">
@@ -425,10 +454,10 @@ export default function App() {
                 )}
                 
                 <div className="bg-white rounded-[3rem] p-8 shadow-xl border border-slate-100">
-                  <h3 className="text-[10px] font-black text-slate-400 uppercase mb-6 tracking-widest">Registros Ativos ({infractions.length})</h3>
+                  <h3 className="text-[10px] font-black text-slate-400 uppercase mb-6 tracking-widest">Base de Dados ({infractions.length} itens)</h3>
                   <div className="space-y-3 max-h-[400px] overflow-y-auto no-scrollbar">
-                    {infractions.sort((a,b) => a.codigo_enquadramento.localeCompare(b.codigo_enquadramento)).slice(0, 80).map(inf => (
-                      <div key={inf.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-[1.8rem] border border-slate-100 hover:bg-white transition-all group">
+                    {infractions.sort((a,b) => a.codigo_enquadramento.localeCompare(b.codigo_enquadramento)).slice(0, 100).map(inf => (
+                      <div key={inf.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-[1.8rem] border border-slate-100 group">
                         <div className="truncate flex-1 pr-4">
                           <p className="text-[10px] font-black text-blue-600">{inf.codigo_enquadramento}</p>
                           <p className="text-xs font-bold text-slate-800 truncate">{inf.titulo_curto}</p>
@@ -446,11 +475,11 @@ export default function App() {
 
       {!selectedInfraction && (
         <div className="fixed bottom-10 left-0 right-0 px-8 z-30">
-            <nav className="max-w-md mx-auto bg-slate-900/95 backdrop-blur-2xl rounded-[3.5rem] flex justify-around items-center p-3 border border-white/10 shadow-[0_20px_50px_rgba(0,0,0,0.5)] safe-bottom">
-              <button onClick={() => setActiveTab('search')} className={`p-4 rounded-full transition-all ${activeTab === 'search' ? 'bg-blue-600 text-white scale-110 shadow-lg shadow-blue-600/30' : 'text-slate-500'}`}><Icons.Search /></button>
-              <button onClick={() => setActiveTab('history')} className={`p-4 rounded-full transition-all ${activeTab === 'history' ? 'bg-blue-600 text-white scale-110 shadow-lg shadow-blue-600/30' : 'text-slate-500'}`}><Icons.History /></button>
+            <nav className="max-w-md mx-auto bg-slate-900/95 backdrop-blur-2xl rounded-[3.5rem] flex justify-around items-center p-3 border border-white/10 shadow-2xl safe-bottom">
+              <button onClick={() => setActiveTab('search')} className={`p-4 rounded-full transition-all ${activeTab === 'search' ? 'bg-blue-600 text-white scale-110 shadow-lg' : 'text-slate-500'}`}><Icons.Search /></button>
+              <button onClick={() => setActiveTab('history')} className={`p-4 rounded-full transition-all ${activeTab === 'history' ? 'bg-blue-600 text-white scale-110 shadow-lg' : 'text-slate-500'}`}><Icons.History /></button>
               {user.role === UserRole.GESTOR && (
-                <button onClick={() => setActiveTab('admin')} className={`p-4 rounded-full transition-all ${activeTab === 'admin' ? 'bg-blue-600 text-white scale-110 shadow-lg shadow-blue-600/30' : 'text-slate-500'}`}><Icons.Admin /></button>
+                <button onClick={() => setActiveTab('admin')} className={`p-4 rounded-full transition-all ${activeTab === 'admin' ? 'bg-blue-600 text-white scale-110 shadow-lg' : 'text-slate-500'}`}><Icons.Admin /></button>
               )}
             </nav>
         </div>

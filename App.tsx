@@ -28,7 +28,7 @@ const Icons = {
   Admin: () => <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002 2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>,
   ArrowLeft: () => <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>,
   Logout: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>,
-  Trash: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>,
+  Trash: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>,
   Plus: () => <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>,
   File: () => <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>,
 };
@@ -84,7 +84,7 @@ export default function App() {
       .slice(0, 30);
   }, [debouncedSearch, infractions]);
 
-  // MOTOR DE EXTRAÇÃO MBFT COM CORREÇÃO DE NATUREZA
+  // MOTOR DE EXTRAÇÃO MBFT COM CORREÇÃO DE NATUREZA (GRAVIDADE)
   const processPDF = async (file: File) => {
     setIsProcessing(true);
     setProgress(0);
@@ -98,7 +98,8 @@ export default function App() {
       for (let i = 1; i <= pdf.numPages; i++) {
         const page = await pdf.getPage(i);
         const textContent = await page.getTextContent();
-        const strings = textContent.items.map((item: any) => item.str.trim());
+        // Preserva strings limpas
+        const strings = textContent.items.map((item: any) => item.str.trim()).filter((s: string) => s.length > 0);
         const fullText = strings.join(' ');
 
         // Captura do Código (Padrão 000-00)
@@ -112,39 +113,38 @@ export default function App() {
 
         // CAPTURA DE TÍTULO (Tipificação Resumida)
         let titulo = "";
-        const idxResumida = strings.findIndex(s => s.includes("Tipificação Resumida:"));
-        const idxCodigoLabel = strings.findIndex(s => s.includes("Código do Enquadramento:"));
-        
+        const idxResumida = strings.findIndex(s => s.toLowerCase().includes("tipificação resumida:"));
+        const idxCodigoLabel = strings.findIndex(s => s.toLowerCase().includes("código do enquadramento:"));
         if (idxResumida !== -1 && idxCodigoLabel !== -1) {
           titulo = strings.slice(idxResumida + 1, idxCodigoLabel).join(' ').trim();
         }
 
         // CAPTURA DE DESCRIÇÃO (Tipificação do Enquadramento)
         let descricao = "";
-        const idxEnquadramento = strings.findIndex(s => s.includes("Tipificação do Enquadramento:"));
-        const idxGravidadeLabel = strings.findIndex(s => s.includes("Gravidade:"));
+        const idxEnquadramento = strings.findIndex(s => s.toLowerCase().includes("tipificação do enquadramento:"));
+        const idxGravidadeLabel = strings.findIndex(s => s.toLowerCase().includes("gravidade:"));
         if (idxEnquadramento !== -1 && idxGravidadeLabel !== -1) {
           descricao = strings.slice(idxEnquadramento + 1, idxGravidadeLabel).join(' ').trim();
         }
 
-        // CAPTURA DE NATUREZA (GRAVIDADE) - Lógica de delimitador estrito
+        // CAPTURA DE NATUREZA (GRAVIDADE) - Lógica Robusta de Procura Linear
         let natureza: Natureza = Natureza.NAO_APLICAVEL;
-        const idxPenalidadeLabel = strings.findIndex(s => s.includes("Penalidade:"));
-        
-        if (idxGravidadeLabel !== -1 && idxPenalidadeLabel !== -1) {
-          const gravidadeTexto = strings.slice(idxGravidadeLabel + 1, idxPenalidadeLabel).join(' ').toLowerCase();
+        if (idxGravidadeLabel !== -1) {
+          // Varre as próximas strings até encontrar uma palavra chave de natureza ou o próximo rótulo ("Penalidade")
+          const searchRange = strings.slice(idxGravidadeLabel + 1, idxGravidadeLabel + 10);
+          const gravidadeText = searchRange.join(' ').toLowerCase();
           
-          if (gravidadeTexto.includes("gravíssima")) natureza = Natureza.GRAVISSIMA;
-          else if (gravidadeTexto.includes("grave")) natureza = Natureza.GRAVE;
-          else if (gravidadeTexto.includes("média") || gravidadeTexto.includes("media")) natureza = Natureza.MEDIA;
-          else if (gravidadeTexto.includes("leve")) natureza = Natureza.LEVE;
+          if (gravidadeText.includes("gravíssima")) natureza = Natureza.GRAVISSIMA;
+          else if (gravidadeText.includes("grave")) natureza = Natureza.GRAVE;
+          else if (gravidadeText.includes("média") || gravidadeText.includes("media")) natureza = Natureza.MEDIA;
+          else if (gravidadeText.includes("leve")) natureza = Natureza.LEVE;
         }
 
         // Divisão das colunas inferiores
         const sections = fullText.split(/(Quando AUTUAR|Quando NÃO Autuar|Definições e Procedimentos|Exemplos do Campo de Observações do AIT:)/i);
         const getSection = (header: string) => {
           const idx = sections.findIndex(s => s.toLowerCase() === header.toLowerCase());
-          return idx !== -1 ? sections[idx + 1].trim() : "Informação não constante na ficha.";
+          return idx !== -1 ? sections[idx + 1].trim() : "Informação não disponível nesta ficha.";
         };
 
         allFichas.push({
@@ -165,7 +165,7 @@ export default function App() {
         await yieldToBrowser();
       }
 
-      // Commit em Lote
+      // Commit em Lote para Firestore
       let batch = writeBatch(db);
       let count = 0;
       for (const ficha of allFichas) {
@@ -185,11 +185,11 @@ export default function App() {
       }
       if (count > 0) await batch.commit();
       
-      alert(`Importação Finalizada! ${allFichas.length} fichas com gravidade mapeada.`);
+      alert(`Importação Concluída: ${allFichas.length} infrações com naturezas mapeadas.`);
       setIsAdminPanelOpen(false);
     } catch (e) {
       console.error(e);
-      alert("Erro ao processar o arquivo.");
+      alert("Erro no processamento do manual.");
     } finally {
       setIsProcessing(false);
       setProgress(0);
@@ -198,7 +198,7 @@ export default function App() {
   };
 
   const handleClearDatabase = async () => {
-    if (!confirm("⚠️ ATENÇÃO: Deseja apagar todas as infrações?")) return;
+    if (!confirm("⚠️ APAGAR TODA A BASE DE DADOS?")) return;
     setIsProcessing(true);
     setBatchStatus('Limpando base...');
     try {
@@ -215,13 +215,13 @@ export default function App() {
         }
       }
       if (count > 0) await batch.commit();
-      alert("Base de dados reiniciada.");
+      alert("Base de dados limpa.");
     } catch (e) { alert("Erro ao limpar."); } finally { setIsProcessing(false); setBatchStatus(''); }
   };
 
   if (!user) {
     return (
-      <div className="min-h-screen bg-blue-900 flex flex-col justify-center px-10">
+      <div className="min-h-screen bg-blue-900 flex flex-col justify-center px-10 relative">
         <div className="text-center mb-10">
           <h1 className="text-4xl font-black text-white italic tracking-tighter">Multas Rápidas</h1>
           <p className="text-blue-300 text-[10px] font-bold uppercase tracking-widest mt-2">Fiscalização Oficial MBFT</p>
@@ -233,6 +233,9 @@ export default function App() {
             if (!email) return;
             setUser({ id: 'agt-' + Date.now(), name: 'Agente', email, role: email.includes('admin') ? UserRole.GESTOR : UserRole.AGENTE });
           }} className="w-full bg-blue-600 text-white py-5 rounded-3xl font-black uppercase shadow-xl btn-active">Acessar</button>
+        </div>
+        <div className="absolute bottom-10 left-0 right-0 text-center">
+            <p className="text-[9px] font-bold text-blue-400 uppercase tracking-widest opacity-40">Desenvolvido por Welerson Faria - GCMIII - 2025</p>
         </div>
       </div>
     );
@@ -302,14 +305,14 @@ export default function App() {
                         <NatureTag natureza={inf.natureza} />
                         <span className="text-xs font-black text-blue-600">{inf.codigo_enquadramento}</span>
                       </div>
-                      <h3 className="font-black text-slate-800 text-sm leading-tight line-clamp-3">{inf.titulo_curto}</h3>
+                      <h3 className="font-black text-slate-800 text-sm leading-tight line-clamp-2">{inf.titulo_curto}</h3>
                     </button>
                   ))}
                 </div>
               ) : (
                 <div className="space-y-8">
                   <div className="flex flex-col items-center justify-center py-20 opacity-20 text-center text-slate-400">
-                    <Icons.Search /><p className="font-black text-xs uppercase mt-4 tracking-widest">Pesquise para começar</p>
+                    <Icons.Search /><p className="font-black text-xs uppercase mt-4 tracking-widest">Pronto para pesquisar</p>
                   </div>
                 </div>
               )
@@ -320,7 +323,7 @@ export default function App() {
                 <div className="flex justify-between items-end px-2">
                   <div className="space-y-1">
                     <h2 className="text-3xl font-black text-slate-900 tracking-tighter">Gestão</h2>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Importador MBFT v2.0</p>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Atualização Manual MBFT</p>
                   </div>
                   <div className="flex gap-3">
                     <button onClick={handleClearDatabase} disabled={isProcessing} className="bg-red-500 text-white p-4 rounded-2xl shadow-xl active:scale-90 transition-all disabled:opacity-30"><Icons.Trash /></button>
@@ -336,8 +339,8 @@ export default function App() {
                     >
                         <Icons.File />
                         <div className="text-center">
-                          <span className="text-[10px] font-black uppercase block">Carregar PDF do Manual</span>
-                          <span className="text-[8px] opacity-40 uppercase">Extração de Título e Cores</span>
+                          <span className="text-[10px] font-black uppercase block">Carregar PDF MBFT</span>
+                          <span className="text-[8px] opacity-40 uppercase">Extração Inteligente de Gravidade</span>
                         </div>
                     </button>
 
@@ -353,8 +356,8 @@ export default function App() {
                   </div>
                 )}
                 
-                <div className="bg-white rounded-[3rem] p-8 shadow-xl border border-slate-100">
-                  <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-6">Visualização da Base ({infractions.length})</h3>
+                <div className="bg-white rounded-[3rem] p-8 shadow-xl border border-slate-100 mb-20">
+                  <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-6">Base de Dados ({infractions.length})</h3>
                   <div className="space-y-3 max-h-[400px] overflow-y-auto no-scrollbar">
                     {infractions.slice(0, 50).map(inf => (
                       <div key={inf.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-[1.8rem] border border-slate-100">
@@ -368,6 +371,12 @@ export default function App() {
                   </div>
                 </div>
               </div>
+            )}
+            
+            {!isAdminPanelOpen && (
+               <div className="text-center pb-10 opacity-30">
+                  <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Welerson Faria - GCMIII - 2025</p>
+               </div>
             )}
           </div>
         )}

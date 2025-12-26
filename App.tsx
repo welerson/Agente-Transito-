@@ -14,7 +14,8 @@ import {
   increment,
   query,
   orderBy,
-  limit
+  limit,
+  deleteDoc
 } from 'firebase/firestore';
 
 // PDF.js worker setup
@@ -94,11 +95,63 @@ export default function App() {
       .slice(0, 5);
   }, [infractions]);
 
-  // MOTOR DE EXTRAÇÃO BBOX (REGION-BASED) - SOLUÇÃO 1 & 2
+  // FUNÇÃO CORRIGIDA: APAGAR TUDO (Exclusão em Lote)
+  const handleClearDatabase = async () => {
+    if (!confirm("⚠️ ATENÇÃO: Isso apagará todas as infrações do banco de dados permanentemente. Confirmar?")) return;
+    
+    setIsProcessing(true);
+    setBatchStatus('Limpando banco de dados...');
+    setProgress(10);
+
+    try {
+      const querySnapshot = await getDocs(collection(db, 'infractions'));
+      const totalDocs = querySnapshot.size;
+      
+      if (totalDocs === 0) {
+        alert("O banco já está vazio.");
+        setIsProcessing(false);
+        return;
+      }
+
+      let currentBatch = writeBatch(db);
+      let count = 0;
+      let deletedTotal = 0;
+
+      for (const docSnap of querySnapshot.docs) {
+        currentBatch.delete(docSnap.ref);
+        count++;
+        deletedTotal++;
+
+        // Limite do Firestore por batch é 500
+        if (count >= 400) {
+          await currentBatch.commit();
+          currentBatch = writeBatch(db);
+          count = 0;
+          setProgress(Math.round((deletedTotal / totalDocs) * 100));
+          await yieldToBrowser();
+        }
+      }
+
+      if (count > 0) {
+        await currentBatch.commit();
+      }
+
+      setProgress(100);
+      alert(`Sucesso: ${deletedTotal} infrações removidas.`);
+    } catch (e) {
+      console.error(e);
+      alert("Erro ao limpar banco de dados.");
+    } finally {
+      setIsProcessing(false);
+      setBatchStatus('');
+      setProgress(0);
+    }
+  };
+
   const processPDF = async (file: File) => {
     setIsProcessing(true);
     setProgress(0);
-    setBatchStatus('Iniciando Extração por Regiões (Bbox)...');
+    setBatchStatus('Extraindo via Bbox...');
     
     try {
       const arrayBuffer = await file.arrayBuffer();
@@ -109,11 +162,9 @@ export default function App() {
         const page = await pdf.getPage(i);
         const viewport = page.getViewport({ scale: 1.0 });
         const textContent = await page.getTextContent();
-        
         const w = viewport.width;
         const h = viewport.height;
         
-        // Mapear itens com coordenadas reais
         const items = textContent.items.map((item: any) => ({
           str: item.str,
           x: item.transform[4],
@@ -122,38 +173,26 @@ export default function App() {
           h: item.height
         }));
 
-        // LOCALIZAÇÃO DINÂMICA DE TÍTULOS (ÂNCOURA Y)
-        const labels = ["QUANDO AUTUAR", "QUANDO NÃO AUTUAR", "DEFINIÇÕES E PROCEDIMENTOS", "EXEMPLOS DO CAMPO"];
         let anchorY = 0;
         items.forEach(it => {
           if (it.str.toUpperCase().includes("QUANDO AUTUAR")) anchorY = it.y;
         });
 
-        if (anchorY === 0) continue; // Página não é uma ficha técnica válida
+        if (anchorY === 0) continue;
 
-        // DIVISÃO EM 4 CAIXAS VERTICAIS (BBOX)
         const colW = w / 4;
-        const boxes = {
-          atuar: [],
-          naoAtuar: [],
-          defs: [],
-          exemplos: []
-        };
+        const boxes = { atuar: [], naoAtuar: [], defs: [], exemplos: [] };
 
         items.forEach(it => {
-          // Ignorar o que estiver acima dos títulos ou no rodapé extremo
           if (it.y > anchorY - 5 || it.y < 40) return; 
-
           if (it.x < colW) boxes.atuar.push(it.str);
           else if (it.x < colW * 2) boxes.naoAtuar.push(it.str);
           else if (it.x < colW * 3) boxes.defs.push(it.str);
           else boxes.exemplos.push(it.str);
         });
 
-        // Extração de metadados da parte superior da ficha (Código, Artigo, etc)
         let codigo = "";
         let artigo = "";
-        let titulo = "";
         items.forEach(it => {
           if (it.y > anchorY + 20) {
             if (it.str.match(/\d{3}-\d{2}/)) codigo = it.str.trim();
@@ -166,33 +205,29 @@ export default function App() {
             id: codigo,
             codigo_enquadramento: codigo,
             artigo: artigo || 'N/A',
-            titulo_curto: titulo || `Ficha ${codigo}`,
+            titulo_curto: `Ficha ${codigo}`,
             quando_atuar: [boxes.atuar.join(" ")],
             quando_nao_atuar: [boxes.naoAtuar.join(" ")],
             definicoes_procedimentos: [boxes.defs.join(" ")],
             exemplos_ait: [boxes.exemplos.join(" ")]
           });
         }
-
         setProgress(Math.round((i / pdf.numPages) * 100));
         await yieldToBrowser();
       }
 
-      // Importação em massa
       let batch = writeBatch(db);
       let count = 0;
       for (const ficha of allFichas) {
-        const ref = doc(db, 'infractions', ficha.id);
+        const ref = doc(db, 'infractions', ficha.id!);
         batch.set(ref, { ...ficha, status: 'ativo', ultima_atualizacao: new Date().toISOString() }, { merge: true });
         count++;
         if (count >= 400) { await batch.commit(); batch = writeBatch(db); count = 0; }
       }
       if (count > 0) await batch.commit();
-      
-      alert(`${allFichas.length} fichas processadas com sucesso!`);
+      alert(`${allFichas.length} fichas importadas.`);
     } catch (e) {
-      console.error(e);
-      alert("Erro ao processar PDF por Bbox.");
+      alert("Erro no PDF.");
     } finally {
       setIsProcessing(false);
       setProgress(0);
@@ -204,7 +239,7 @@ export default function App() {
     const file = e.target.files?.[0];
     if (!file) return;
     setIsProcessing(true);
-    setBatchStatus('Processando JSON Estruturado...');
+    setBatchStatus('Lendo JSON...');
     try {
       const text = await file.text();
       const data = JSON.parse(text);
@@ -216,17 +251,8 @@ export default function App() {
         const item = list[i];
         const id = item.codigo_enquadramento || item.codigo || item.id;
         if (!id) continue;
-        
         const docRef = doc(db, 'infractions', id);
-        batch.set(docRef, {
-          ...item,
-          id,
-          codigo_enquadramento: id,
-          status: 'ativo',
-          ultima_atualizacao: new Date().toISOString(),
-          count_atuacoes: item.count_atuacoes || 0
-        }, { merge: true });
-        
+        batch.set(docRef, { ...item, id, codigo_enquadramento: id, status: 'ativo', ultima_atualizacao: new Date().toISOString() }, { merge: true });
         count++;
         if (count >= 450) {
           await batch.commit();
@@ -237,13 +263,8 @@ export default function App() {
         }
       }
       if (count > 0) await batch.commit();
-      alert(`Importação concluída: ${list.length} registros.`);
-    } catch (e) {
-      alert("Erro no JSON.");
-    } finally {
-      setIsProcessing(false);
-      setBatchStatus('');
-    }
+      alert(`Sucesso: ${list.length} registros.`);
+    } catch (e) { alert("Erro no JSON."); } finally { setIsProcessing(false); setBatchStatus(''); }
   };
 
   const handleRecord = async (inf: Infraction) => {
@@ -251,7 +272,7 @@ export default function App() {
     try {
       const ref = doc(db, 'infractions', inf.id);
       await updateDoc(ref, { count_atuacoes: increment(1) });
-      alert("Consulta registrada com sucesso.");
+      alert("Consulta registrada.");
     } catch (e) { alert("Erro ao registrar."); }
   };
 
@@ -278,7 +299,6 @@ export default function App() {
 
   return (
     <div className="flex flex-col h-screen max-w-lg mx-auto bg-slate-50 relative overflow-hidden safe-top">
-      {/* Header Compacto para Mobile */}
       <header className="bg-blue-800 text-white px-6 pt-6 pb-8 sticky top-0 z-20 shadow-xl rounded-b-[2rem] border-b-4 border-blue-900/20">
         <div className="flex justify-between items-center mb-6">
           <div className="flex flex-col">
@@ -304,12 +324,10 @@ export default function App() {
         )}
       </header>
 
-      {/* Main Content */}
       <main className="flex-1 overflow-y-auto px-6 pt-6 pb-32 no-scrollbar">
         {selectedInfraction ? (
           <div className="space-y-6 animate-in slide-in-from-right duration-300">
             <button onClick={() => setSelectedInfraction(null)} className="flex items-center gap-2 text-blue-600 font-black uppercase text-[10px] bg-blue-50 px-5 py-3 rounded-xl active:scale-95 transition-all"><Icons.ArrowLeft /> Voltar</button>
-            
             <div className="bg-white rounded-[2rem] shadow-xl p-8 border border-slate-100">
               <div className="flex justify-between items-start mb-4">
                 <NatureTag natureza={selectedInfraction.natureza} />
@@ -317,50 +335,16 @@ export default function App() {
               </div>
               <h3 className="text-2xl font-black text-slate-900 leading-tight mb-4">{selectedInfraction.titulo_curto}</h3>
               <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-6">Art. {selectedInfraction.artigo}</p>
-              
-              <div className="p-5 bg-slate-900 rounded-2xl mb-8">
-                <p className="text-sm text-blue-100 italic leading-relaxed">"{selectedInfraction.descricao}"</p>
-              </div>
-
+              <div className="p-5 bg-slate-900 rounded-2xl mb-8"><p className="text-sm text-blue-100 italic leading-relaxed">"{selectedInfraction.descricao}"</p></div>
               <div className="space-y-6">
                 <section>
-                  <h4 className="text-[10px] font-black text-green-600 uppercase mb-3 tracking-widest flex items-center gap-2">
-                    <div className="w-1.5 h-1.5 bg-green-500 rounded-full"></div> Quando Atuar
-                  </h4>
-                  <div className="text-xs text-slate-700 leading-relaxed bg-green-50/50 p-4 rounded-xl border border-green-100">
-                    {selectedInfraction.quando_atuar?.map((t, i) => <p key={i} className="mb-2 last:mb-0">• {t}</p>)}
-                  </div>
+                  <h4 className="text-[10px] font-black text-green-600 uppercase mb-3 tracking-widest flex items-center gap-2"><div className="w-1.5 h-1.5 bg-green-500 rounded-full"></div> Quando Atuar</h4>
+                  <div className="text-xs text-slate-700 leading-relaxed bg-green-50/50 p-4 rounded-xl border border-green-100">{selectedInfraction.quando_atuar?.map((t, i) => <p key={i} className="mb-2 last:mb-0">• {t}</p>)}</div>
                 </section>
-
                 <section>
-                  <h4 className="text-[10px] font-black text-red-600 uppercase mb-3 tracking-widest flex items-center gap-2">
-                    <div className="w-1.5 h-1.5 bg-red-500 rounded-full"></div> Quando NÃO Atuar
-                  </h4>
-                  <div className="text-xs text-slate-700 leading-relaxed bg-red-50/50 p-4 rounded-xl border border-red-100">
-                    {selectedInfraction.quando_nao_atuar?.map((t, i) => <p key={i} className="mb-2 last:mb-0">• {t}</p>)}
-                  </div>
+                  <h4 className="text-[10px] font-black text-red-600 uppercase mb-3 tracking-widest flex items-center gap-2"><div className="w-1.5 h-1.5 bg-red-500 rounded-full"></div> Quando NÃO Atuar</h4>
+                  <div className="text-xs text-slate-700 leading-relaxed bg-red-50/50 p-4 rounded-xl border border-red-100">{selectedInfraction.quando_nao_atuar?.map((t, i) => <p key={i} className="mb-2 last:mb-0">• {t}</p>)}</div>
                 </section>
-
-                {selectedInfraction.definicoes_procedimentos && (
-                  <section>
-                    <h4 className="text-[10px] font-black text-blue-600 uppercase mb-3 tracking-widest">Definições e Procedimentos</h4>
-                    <div className="text-[11px] text-slate-600 leading-relaxed bg-blue-50/50 p-4 rounded-xl border border-blue-100">
-                      {selectedInfraction.definicoes_procedimentos.map((t, i) => <p key={i} className="mb-2 last:mb-0">{t}</p>)}
-                    </div>
-                  </section>
-                )}
-
-                <div className="grid grid-cols-2 gap-4">
-                   <div className="bg-slate-100 p-4 rounded-xl text-center">
-                     <p className="text-[8px] font-black text-slate-400 uppercase">Pontos</p>
-                     <p className="text-xl font-black text-slate-800">{selectedInfraction.pontos}</p>
-                   </div>
-                   <div className="bg-slate-100 p-4 rounded-xl text-center">
-                     <p className="text-[8px] font-black text-slate-400 uppercase">Penalidade</p>
-                     <p className="text-[10px] font-black text-slate-800 truncate px-2">{selectedInfraction.penalidade}</p>
-                   </div>
-                </div>
-
                 <button onClick={() => handleRecord(selectedInfraction)} className="w-full py-5 bg-blue-600 text-white rounded-2xl font-black uppercase text-xs shadow-lg active:scale-95 transition-all">REGISTRAR CONSULTA</button>
               </div>
             </div>
@@ -380,12 +364,6 @@ export default function App() {
                       <p className="text-[10px] font-bold text-slate-400">Art. {inf.artigo}</p>
                     </button>
                   ))}
-                  {filteredInfractions.length === 0 && (
-                    <div className="text-center py-20 opacity-30">
-                      <Icons.Search />
-                      <p className="text-xs font-black uppercase mt-4 tracking-widest">Nenhuma infração encontrada</p>
-                    </div>
-                  )}
                 </div>
               ) : (
                 <div className="space-y-8">
@@ -402,10 +380,7 @@ export default function App() {
                       </div>
                     </div>
                   )}
-                  <div className="flex flex-col items-center justify-center py-20 opacity-20">
-                    <Icons.Search />
-                    <p className="text-[10px] font-black uppercase mt-4 tracking-widest text-center">Digite o código ou artigo<br/>para iniciar a fiscalização</p>
-                  </div>
+                  <div className="flex flex-col items-center justify-center py-20 opacity-20"><Icons.Search /><p className="text-[10px] font-black uppercase mt-4 tracking-widest text-center">Digite o código ou artigo<br/>para iniciar a fiscalização</p></div>
                 </div>
               )
             )}
@@ -449,7 +424,14 @@ export default function App() {
                 <div className="bg-white rounded-3xl p-6 shadow-md border border-slate-100">
                    <div className="flex justify-between items-center mb-6">
                      <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Registros: {infractions.length}</h3>
-                     <button onClick={() => { if(confirm("Apagar tudo?")) setDoc(doc(db, 'system', 'reset'), { timestamp: Date.now() }); }} className="text-red-500 p-2"><Icons.Trash /></button>
+                     {/* BOTÃO CORRIGIDO */}
+                     <button 
+                        onClick={handleClearDatabase}
+                        disabled={isProcessing}
+                        className="text-red-500 p-2 hover:bg-red-50 rounded-full transition-colors disabled:opacity-30"
+                      >
+                        <Icons.Trash />
+                      </button>
                    </div>
                    <div className="space-y-2 max-h-[300px] overflow-y-auto no-scrollbar">
                      {infractions.slice(0, 50).map(inf => (
@@ -469,7 +451,6 @@ export default function App() {
         )}
       </main>
 
-      {/* Nav Bar Flutuante */}
       {!selectedInfraction && (
         <div className="fixed bottom-8 left-0 right-0 px-8 z-30">
           <nav className="max-w-md mx-auto bg-slate-900/90 backdrop-blur-xl rounded-[2.5rem] flex justify-around items-center p-2 border border-white/10 shadow-2xl safe-bottom">

@@ -12,7 +12,8 @@ import {
   collection, 
   onSnapshot,
   addDoc,
-  writeBatch
+  writeBatch,
+  getDocs
 } from 'firebase/firestore';
 
 declare const pdfjsLib: any;
@@ -102,15 +103,10 @@ export default function App() {
       .slice(0, 10);
   }, [infractions]);
 
-  // SUPER PARSER MBFT - RESILIENTE A FALHAS DE OCR
   const parseManualText = (rawText: string): Partial<Infraction> | null => {
     try {
-      // Normalização: remove espaços excessivos mas mantém parágrafos
       const content = rawText.replace(/[ \t]+/g, ' ').replace(/\r\n/g, '\n');
-      
       const sections: Record<string, string> = {};
-      
-      // Definição de cabeçalhos com Regex para maior flexibilidade (suporta variações de acento, caixa e pontuação)
       const headerPatterns = [
         { key: 'titulo_curto', regex: /Tipifica[çc][ãa]o\s+Resumida/i },
         { key: 'codigo_enquadramento', regex: /C[óo]digo\s+do\s+Enquadramento/i },
@@ -125,7 +121,6 @@ export default function App() {
         { key: 'exemplos', regex: /EXEMPLOS\s+DE\s+AIT/i }
       ];
 
-      // Encontrar a posição de cada cabeçalho no texto
       const markers = headerPatterns.map(h => {
         const match = content.match(h.regex);
         return {
@@ -135,32 +130,24 @@ export default function App() {
         };
       }).filter(m => m.index !== -1).sort((a, b) => a.index - b.index);
 
-      // Extrair o texto entre um cabeçalho e o próximo
       markers.forEach((marker, i) => {
         const start = marker.index! + marker.label!.length;
         const nextMarker = markers[i + 1];
         const end = nextMarker ? nextMarker.index : content.length;
-        
         let segment = content.substring(start, end).trim();
-        // Limpar prefixos comuns como ":" ou "-" que ficam após o cabeçalho
         segment = segment.replace(/^[:\-\s\.]+/g, '').trim();
         sections[marker.key] = segment;
       });
 
       if (!sections.codigo_enquadramento) return null;
 
-      // PROCESSADOR DE LISTAS INTELIGENTE
-      // Identifica itens por quebra de linha OU por numeração (1., 2., a), b))
       const processList = (text: string) => {
         if (!text) return [];
-        
-        // 1. Tenta quebrar por números/letras de lista MBFT: "1. ", "2) ", "a. "
         const items = text.split(/\n|(?=[a-z\d][\.\)\-]\s+[A-Z\d])/);
-        
         return items
           .map(item => item.trim())
-          .map(item => item.replace(/^[a-z\d][\.\)\-]\s*/i, '')) // Remove o número/letra inicial
-          .filter(item => item.length > 8) // Filtra fragmentos irrelevantes
+          .map(item => item.replace(/^[a-z\d][\.\)\-]\s*/i, ''))
+          .filter(item => item.length > 8)
           .slice(0, 15);
       };
 
@@ -176,7 +163,6 @@ export default function App() {
         medidas_administrativas: sections.medida_admin ? [sections.medida_admin.split('\n')[0].trim()] : []
       };
 
-      // Detecção de Gravidade para o enum Natureza
       const grav = (sections.gravidade || '').toLowerCase();
       if (grav.includes('leve')) result.natureza = Natureza.LEVE;
       else if (grav.includes('grave') && !grav.includes('gravíssima')) result.natureza = Natureza.GRAVE;
@@ -193,7 +179,6 @@ export default function App() {
   };
 
   const handleBulkImport = async (text: string) => {
-    // Divisor padrão de fichas MBFT
     const blocks = text.split(/Tipifica[çc][ãa]o\s+Resumida/i).filter(b => b.length > 100);
     let currentBatch = writeBatch(db);
     let countInBatch = 0;
@@ -204,10 +189,8 @@ export default function App() {
         await yieldToBrowser();
         setBatchStatus(`Importando: ${i + 1} de ${blocks.length}...`);
       }
-      
       const fullText = `Tipificação Resumida ${blocks[i]}`;
       const parsed = parseManualText(fullText);
-      
       if (parsed && parsed.codigo_enquadramento) {
         const docRef = doc(db, 'infractions', parsed.codigo_enquadramento);
         currentBatch.set(docRef, {
@@ -217,11 +200,8 @@ export default function App() {
           fonte_legal: parsed.artigo || 'MBFT',
           tags: [parsed.codigo_enquadramento, parsed.artigo || '']
         }, { merge: true });
-        
         countInBatch++;
         totalImported++;
-
-        // Firebase batches limit is 500
         if (countInBatch >= 450) {
           await currentBatch.commit();
           await yieldToBrowser();
@@ -230,7 +210,6 @@ export default function App() {
         }
       }
     }
-    
     if (countInBatch > 0) await currentBatch.commit();
     return totalImported;
   };
@@ -243,25 +222,17 @@ export default function App() {
       const arrayBuffer = await file.arrayBuffer();
       const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
       let fullText = '';
-      
       for (let i = 1; i <= pdf.numPages; i++) {
         const page = await pdf.getPage(i);
         const textContent = await page.getTextContent();
-        
-        // Join items with '\n' to keep structure, but avoid double spaces
-        const pageText = textContent.items
-          .map((item: any) => item.str)
-          .join('\n');
-          
+        const pageText = textContent.items.map((item: any) => item.str).join('\n');
         fullText += `\n\nTIPIFICAÇÃO RESUMIDA\n` + pageText; 
-        
         if (i % 10 === 0 || i === pdf.numPages) {
           setProgress(Math.round((i / pdf.numPages) * 100));
           setBatchStatus(`Lendo página ${i} de ${pdf.numPages}...`);
           await yieldToBrowser();
         }
       }
-
       setBatchStatus('Identificando informações das fichas...');
       const importedCount = await handleBulkImport(fullText);
       alert(`CONCLUÍDO: ${importedCount} infrações cadastradas com sucesso!`);
@@ -279,6 +250,37 @@ export default function App() {
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) processPDF(file);
+  };
+
+  const handleClearDatabase = async () => {
+    if (!confirm("⚠️ ATENÇÃO: Isso irá apagar TODAS as infrações cadastradas. Deseja continuar?")) return;
+    
+    setIsProcessing(true);
+    setBatchStatus('Limpando base de dados...');
+    try {
+      const querySnapshot = await getDocs(collection(db, 'infractions'));
+      let batch = writeBatch(db);
+      let count = 0;
+
+      for (const docSnap of querySnapshot.docs) {
+        batch.delete(docSnap.ref);
+        count++;
+        if (count >= 450) {
+          await batch.commit();
+          batch = writeBatch(db);
+          count = 0;
+        }
+      }
+
+      if (count > 0) await batch.commit();
+      alert("Base de dados limpa com sucesso!");
+    } catch (e) {
+      console.error(e);
+      alert("Erro ao limpar base.");
+    } finally {
+      setIsProcessing(false);
+      setBatchStatus('');
+    }
   };
 
   const handleRecord = async (inf: Infraction) => {
@@ -431,9 +433,24 @@ export default function App() {
                 <div className="flex justify-between items-end">
                   <div className="space-y-1">
                     <h2 className="text-3xl font-black text-slate-900 tracking-tighter">Gestão</h2>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Configurações MBFT</p>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Painel Administrativo</p>
                   </div>
-                  <button onClick={() => setIsAdminPanelOpen(!isAdminPanelOpen)} className="bg-blue-600 text-white px-6 py-4 rounded-[1.8rem] font-black text-xs uppercase shadow-xl btn-active"><Icons.Plus /></button>
+                  <div className="flex gap-2">
+                    <button 
+                      onClick={handleClearDatabase} 
+                      disabled={isProcessing}
+                      className="bg-red-500 text-white px-4 py-4 rounded-[1.8rem] font-black text-xs uppercase shadow-xl btn-active disabled:opacity-50"
+                      title="Limpar Base"
+                    >
+                      <Icons.Trash />
+                    </button>
+                    <button 
+                      onClick={() => setIsAdminPanelOpen(!isAdminPanelOpen)} 
+                      className="bg-blue-600 text-white px-6 py-4 rounded-[1.8rem] font-black text-xs uppercase shadow-xl btn-active"
+                    >
+                      <Icons.Plus />
+                    </button>
+                  </div>
                 </div>
 
                 {isAdminPanelOpen && (

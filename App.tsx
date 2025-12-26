@@ -29,7 +29,7 @@ const Icons = {
   ArrowLeft: () => <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>,
   Logout: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>,
   Flash: () => <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path d="M11 3a1 1 0 00-1 1v5H4a1 1 0 00-.832 1.554l7 10a1 1 0 001.664-1.108L10.832 11H17a1 1 0 00.832-1.554l-7-10A1 1 0 0011 3z" /></svg>,
-  Trash: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>,
+  Trash: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>,
   Plus: () => <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>,
   File: () => <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>,
 };
@@ -85,11 +85,11 @@ export default function App() {
       .slice(0, 30);
   }, [debouncedSearch, infractions]);
 
-  // MOTOR DE EXTRAÇÃO BBOX MELHORADO
+  // MOTOR DE EXTRAÇÃO LINEAR (RESTORED - SEM BBOX)
   const processPDF = async (file: File) => {
     setIsProcessing(true);
     setProgress(0);
-    setBatchStatus('Iniciando Inteligência Bbox...');
+    setBatchStatus('Processando conteúdo do PDF...');
     
     try {
       const arrayBuffer = await file.arrayBuffer();
@@ -98,78 +98,59 @@ export default function App() {
 
       for (let i = 1; i <= pdf.numPages; i++) {
         const page = await pdf.getPage(i);
-        const viewport = page.getViewport({ scale: 1.0 });
         const textContent = await page.getTextContent();
         
-        const w = viewport.width;
-        const h = viewport.height;
+        // Extração linear das strings
+        const strings = textContent.items.map((item: any) => item.str);
+        const fullText = strings.join(' ');
+
+        // Captura do Código (Padrão 000-00)
+        const codigoMatch = fullText.match(/(\d{3}-\d{2})/);
+        const codigo = codigoMatch ? codigoMatch[1] : null;
+
+        if (!codigo) continue;
+
+        // Captura do Artigo
+        const artigoMatch = fullText.match(/Art\.\s+\d+[^\s]*/i);
+        const artigo = artigoMatch ? artigoMatch[0] : 'Consultar MBFT';
+
+        // Melhoria na captura de Título (Pega as primeiras linhas significativas que não sejam o código/artigo)
+        let titulo = "";
+        const potentialTitles = strings.filter(s => 
+          s.trim().length > 10 && 
+          !s.match(/\d{3}-\d{2}/) && 
+          !s.toLowerCase().includes('art.') &&
+          !s.toLowerCase().includes('mbft')
+        );
+        titulo = potentialTitles[0] || `Infração ${codigo}`;
+
+        // Divisão por seções (Regex case-insensitive)
+        const sections = fullText.split(/(QUANDO AUTUAR|QUANDO NÃO AUTUAR|DEFINIÇÕES E PROCEDIMENTOS|EXEMPLOS DE AIT)/i);
         
-        const items = textContent.items.map((item: any) => ({
-          str: item.str,
-          x: item.transform[4],
-          y: item.transform[5],
-          w: item.width,
-          h: item.height
-        }));
+        const getSectionContent = (header: string) => {
+          const index = sections.findIndex(s => s.toUpperCase() === header.toUpperCase());
+          return index !== -1 ? sections[index + 1].trim() : "Informação não encontrada nesta ficha.";
+        };
 
-        // ÂNCORA DINÂMICA PARA AS COLUNAS
-        let anchorY = 0;
-        items.forEach(it => {
-          if (it.str.toUpperCase().includes("QUANDO AUTUAR")) anchorY = it.y;
+        allFichas.push({
+          id: codigo,
+          codigo_enquadramento: codigo,
+          artigo: artigo,
+          titulo_curto: titulo.trim(),
+          descricao: titulo.trim(), // Na extração linear, título e descrição costumam se misturar no topo
+          quando_atuar: [getSectionContent("QUANDO AUTUAR")],
+          quando_nao_atuar: [getSectionContent("QUANDO NÃO AUTUAR")],
+          definicoes_procedimentos: [getSectionContent("DEFINIÇÕES E PROCEDIMENTOS")],
+          exemplos_ait: [getSectionContent("EXEMPLOS DE AIT")],
+          natureza: Natureza.NAO_APLICAVEL,
+          status: 'ativo'
         });
-
-        if (anchorY === 0) continue;
-
-        const colW = w / 4;
-        const boxes = { atuar: [], naoAtuar: [], defs: [], exemplos: [] };
-
-        items.forEach(it => {
-          // Captura dados das colunas (abaixo do cabeçalho)
-          if (it.y < anchorY - 5 && it.y > 40) {
-            if (it.x < colW) boxes.atuar.push(it.str);
-            else if (it.x < colW * 2) boxes.naoAtuar.push(it.str);
-            else if (it.x < colW * 3) boxes.defs.push(it.str);
-            else boxes.exemplos.push(it.str);
-          }
-        });
-
-        // EXTRAÇÃO DO CABEÇALHO (TÍTULO, ARTIGO E CÓDIGO)
-        let codigo = "";
-        let artigo = "";
-        let headerLines: string[] = [];
-        
-        items.forEach(it => {
-          if (it.y > anchorY) {
-            if (it.str.match(/\d{3}-\d{2}/)) codigo = it.str.trim();
-            else if (it.str.match(/Art\.\s+\d+/i)) artigo = it.str.trim();
-            else if (it.str.trim().length > 3) headerLines.push(it.str.trim());
-          }
-        });
-
-        if (codigo) {
-          // O título costuma ser a linha mais relevante do cabeçalho
-          const tituloSugerido = headerLines.find(l => l.length > 10) || headerLines[0] || `Ficha ${codigo}`;
-          
-          allFichas.push({
-            id: codigo,
-            codigo_enquadramento: codigo,
-            artigo: artigo || 'Consulte MBFT',
-            titulo_curto: tituloSugerido,
-            descricao: headerLines.join(" "),
-            quando_atuar: [boxes.atuar.join(" ")],
-            quando_nao_atuar: [boxes.naoAtuar.join(" ")],
-            definicoes_procedimentos: [boxes.defs.join(" ")],
-            exemplos_ait: [boxes.exemplos.join(" ")],
-            natureza: Natureza.NAO_APLICAVEL, // Será definido manual ou via lógica posterior
-            status: 'ativo'
-          });
-        }
 
         setProgress(Math.round((i / pdf.numPages) * 100));
         await yieldToBrowser();
       }
 
-      // SALVAMENTO EM BATCH (ESCALÁVEL)
+      // Salvamento em Batch no Firestore
       let batch = writeBatch(db);
       let count = 0;
       for (const ficha of allFichas) {
@@ -189,11 +170,11 @@ export default function App() {
       }
       if (count > 0) await batch.commit();
       
-      alert(`${allFichas.length} infrações importadas com sucesso!`);
+      alert(`Sucesso! ${allFichas.length} infrações foram carregadas.`);
       setIsAdminPanelOpen(false);
     } catch (e) {
       console.error(e);
-      alert("Erro ao processar PDF. Verifique o formato do arquivo.");
+      alert("Erro ao ler o PDF. Tente outro arquivo.");
     } finally {
       setIsProcessing(false);
       setProgress(0);
@@ -219,7 +200,7 @@ export default function App() {
         }
       }
       if (count > 0) await batch.commit();
-      alert("Banco de dados limpo.");
+      alert("Banco de dados limpo com sucesso.");
     } catch (e) { 
       console.error(e);
       alert("Erro ao limpar base."); 
@@ -243,7 +224,7 @@ export default function App() {
       <div className="min-h-screen bg-blue-900 flex flex-col justify-center px-10">
         <div className="text-center mb-10">
           <h1 className="text-4xl font-black text-white italic tracking-tighter">Multas Rápidas</h1>
-          <p className="text-blue-300 text-[10px] font-bold uppercase tracking-widest mt-2">Fiscalização Digital MBFT</p>
+          <p className="text-blue-300 text-[10px] font-bold uppercase tracking-widest mt-2">Fiscalização Oficial MBFT</p>
         </div>
         <div className="bg-white p-8 rounded-[3rem] shadow-2xl space-y-4">
           <input type="email" placeholder="E-mail Funcional" className="w-full p-5 bg-slate-50 rounded-3xl outline-none font-bold text-slate-800" id="login-email" />
@@ -271,7 +252,7 @@ export default function App() {
         {activeTab === 'search' && !selectedInfraction && (
           <div className="relative group">
             <div className="absolute inset-y-0 left-5 flex items-center text-blue-400 group-focus-within:text-blue-200 transition-colors"><Icons.Search /></div>
-            <input className="w-full pl-14 pr-6 py-4 bg-blue-900/40 border border-blue-700/50 rounded-3xl text-white outline-none font-bold text-sm placeholder-blue-300/50" placeholder="Código, Artigo ou Palavra-chave..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
+            <input className="w-full pl-14 pr-6 py-4 bg-blue-900/40 border border-blue-700/50 rounded-3xl text-white outline-none font-bold text-sm placeholder-blue-300/50" placeholder="Pesquisar enquadramento..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
           </div>
         )}
       </header>
@@ -295,18 +276,14 @@ export default function App() {
 
               <div className="space-y-4">
                 <div className="bg-green-50 p-6 rounded-[2rem] border border-green-100">
-                  <h4 className="text-[10px] font-black text-green-700 uppercase mb-3 tracking-widest flex items-center gap-2">
-                    <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></div> Quando Atuar
-                  </h4>
+                  <h4 className="text-[10px] font-black text-green-700 uppercase mb-3 tracking-widest flex items-center gap-2">Quando Atuar</h4>
                   <div className="text-xs font-bold text-green-900 space-y-2 leading-relaxed">
                     {selectedInfraction.quando_atuar?.map((t, i) => <p key={i}>• {t}</p>)}
                   </div>
                 </div>
 
                 <div className="bg-red-50 p-6 rounded-[2rem] border border-red-100">
-                  <h4 className="text-[10px] font-black text-red-700 uppercase mb-3 tracking-widest flex items-center gap-2">
-                    <div className="w-1.5 h-1.5 bg-red-500 rounded-full"></div> Quando Não Atuar
-                  </h4>
+                  <h4 className="text-[10px] font-black text-red-700 uppercase mb-3 tracking-widest flex items-center gap-2">Quando Não Atuar</h4>
                   <div className="text-xs font-bold text-red-900 space-y-2 leading-relaxed">
                     {selectedInfraction.quando_nao_atuar?.map((t, i) => <p key={i}>• {t}</p>)}
                   </div>
@@ -336,7 +313,7 @@ export default function App() {
               ) : (
                 <div className="space-y-8">
                   <div className="flex flex-col items-center justify-center py-20 opacity-20 text-center text-slate-400">
-                    <Icons.Search /><p className="font-black text-xs uppercase mt-4 tracking-widest">Aguardando comando de busca...</p>
+                    <Icons.Search /><p className="font-black text-xs uppercase mt-4 tracking-widest">Aguardando busca...</p>
                   </div>
                 </div>
               )
@@ -347,7 +324,7 @@ export default function App() {
                 <div className="flex justify-between items-end px-2">
                   <div className="space-y-1">
                     <h2 className="text-3xl font-black text-slate-900 tracking-tighter">Gestão</h2>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Carga de Dados PDF</p>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Importação Oficial MBFT</p>
                   </div>
                   <div className="flex gap-3">
                     <button onClick={handleClearDatabase} disabled={isProcessing} className="bg-red-500 text-white p-4 rounded-2xl shadow-xl active:scale-90 transition-all disabled:opacity-30"><Icons.Trash /></button>
@@ -363,8 +340,8 @@ export default function App() {
                     >
                         <Icons.File />
                         <div className="text-center">
-                          <span className="text-[10px] font-black uppercase block">Importar Fichas MBFT</span>
-                          <span className="text-[8px] opacity-40 uppercase">Apenas arquivos .PDF</span>
+                          <span className="text-[10px] font-black uppercase block">Carregar PDF MBFT</span>
+                          <span className="text-[8px] opacity-40 uppercase">Extração Linear de Texto</span>
                         </div>
                     </button>
 
@@ -381,9 +358,7 @@ export default function App() {
                 )}
                 
                 <div className="bg-white rounded-[3rem] p-8 shadow-xl border border-slate-100">
-                  <div className="flex justify-between items-center mb-6">
-                    <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Base Ativa ({infractions.length} registros)</h3>
-                  </div>
+                  <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-6">Infrações Ativas ({infractions.length})</h3>
                   <div className="space-y-3 max-h-[400px] overflow-y-auto no-scrollbar">
                     {infractions.slice(0, 50).map(inf => (
                       <div key={inf.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-[1.8rem] border border-slate-100 active:bg-blue-50 transition-colors">
@@ -394,7 +369,6 @@ export default function App() {
                         <button onClick={() => setSelectedInfraction(inf)} className="text-blue-300 hover:text-blue-600 transition-colors"><Icons.Search /></button>
                       </div>
                     ))}
-                    {infractions.length > 50 && <p className="text-[9px] text-center text-slate-400 uppercase font-bold py-4">Exibindo apenas os primeiros 50 registros</p>}
                   </div>
                 </div>
               </div>

@@ -101,11 +101,10 @@ export default function App() {
       .slice(0, 10);
   }, [infractions]);
 
-  // MOTOR DE EXTRAÇÃO MBFT 9.0 - SOLUÇÃO ESPACIAL PARA COLUNAS PARALELAS
+  // MOTOR DE EXTRAÇÃO MBFT 10.0 - RECONSTRUÇÃO POR COORDENADAS E EIXO CENTRAL
   const parseManualText = (rawText: string): Partial<Infraction> | null => {
     try {
-      // Normalização de caracteres e quebras
-      const content = rawText.replace(/[ \t]+/g, ' ').replace(/\r\n/g, '\n');
+      const content = rawText.replace(/\r\n/g, '\n');
       
       const headerPatterns = [
         { key: 'titulo_curto', regex: /Tipifica[çc][ãa]o\s+Resumida/i },
@@ -139,79 +138,58 @@ export default function App() {
 
       if (!sections.codigo_enquadramento) return null;
 
-      // PROCESSADOR TÉCNICO V9.0 - FLUXO DE LINHAS ESPACIAIS
+      // PROCESSADOR V10 - DIVISÃO POR CANAIS DE COLUNA
       const processTechnicalArea = () => {
         const atuar: string[] = [];
         const naoAtuar: string[] = [];
         const defs: string[] = [];
         const ex: string[] = [];
 
-        const startAtuarIdx = markers.find(m => m.key === 'atuar_header')?.index || 0;
-        const endFichaIdx = markers.find(m => m.key === 'fim_ficha' && m.index > startAtuarIdx)?.index || content.length;
-        const technicalSection = content.substring(startAtuarIdx, endFichaIdx);
-
-        const lines = technicalSection.split('\n').filter(l => l.trim().length > 1);
-        let activeBucket = 0; // 0=Atuar, 1=NaoAtuar, 2=Definições, 3=Exemplos
+        // Identifica o bloco técnico (da ficha até o rodapé)
+        const startIdx = markers.find(m => m.key === 'atuar_header')?.index || 0;
+        const endIdx = markers.find(m => m.key === 'fim_ficha' && m.index > startIdx)?.index || content.length;
+        const block = content.substring(startIdx, endIdx);
+        
+        const lines = block.split('\n').filter(l => l.trim().length > 1);
+        let linearMode = false; // Se vira true, para de tentar separar colunas (Definições/Exemplos)
 
         lines.forEach(line => {
-          const upper = line.toUpperCase().trim();
+          const upper = line.toUpperCase();
           
-          // Ancoragem de Seções Globais
-          if (upper.includes("DEFINIÇÕES E PROCEDIMENTOS")) { activeBucket = 2; return; }
-          if (upper.includes("EXEMPLOS DO CAMPO")) { activeBucket = 3; return; }
+          if (upper.includes("DEFINIÇÕES E PROCEDIMENTOS")) { linearMode = true; return; }
+          if (upper.includes("EXEMPLOS DO CAMPO")) { linearMode = true; return; }
 
-          // Lógica de Detecção de Títulos em Coluna
-          // Às vezes o PDF extrai os títulos na mesma linha: "Quando AUTUAR Quando NÃO Autuar"
-          if (upper.includes("QUANDO AUTUAR") && upper.includes("QUANDO NÃO AUTUAR")) {
-             activeBucket = 0; // Reinicia para processar a linha híbrida
-          } else if (upper.includes("QUANDO NÃO AUTUAR")) {
-             activeBucket = 1;
-             return;
-          } else if (upper.includes("QUANDO AUTUAR")) {
-             activeBucket = 0;
-             return;
-          }
-
-          // DETECÇÃO DE SPLIT DE COLUNA (Baseado em numeração e espaços largos)
-          // O MBFT usa "1. Texto" seguido de "1. Texto" se estiver na mesma linha
-          const parts = line.split(/(\s\d+[\s\.\)]+)/);
-          const hasMultipleNumbers = (line.match(/\d+[\s\.\)]+/g) || []).length >= 2;
-          const hasBigGap = line.includes("    "); // 4 ou mais espaços sugerem troca de coluna
-
-          if ((hasMultipleNumbers || hasBigGap) && activeBucket <= 1) {
-             let left = "";
-             let right = "";
-
-             if (parts.length >= 3) {
-                left = parts[0].replace(/^\d+[\s\.\)]+/, '').trim();
-                right = parts.slice(2).join('').trim();
-             } else if (hasBigGap) {
-                const gapSplit = line.split(/\s{4,}/);
-                left = gapSplit[0].replace(/^\d+[\s\.\)]+/, '').trim();
-                right = gapSplit[1].replace(/^\d+[\s\.\)]+/, '').trim();
-             }
-
-             if (left.length > 2 && !left.toUpperCase().includes("QUANDO AUTUAR")) atuar.push(left);
-             if (right.length > 2 && !right.toUpperCase().includes("QUANDO NÃO")) naoAtuar.push(right);
+          if (!linearMode) {
+            // DETECÇÃO DE SPLIT POR EIXO VIRTUAL (MARCADOR DE COLUNA "|||")
+            // Na extração PDF (abaixo), inserimos "|||" quando o texto cruza o centro da página
+            if (line.includes("|||")) {
+                const [left, right] = line.split("|||");
+                const cleanL = left.replace(/^\d+[\s\.\)]+/, '').trim();
+                const cleanR = right.replace(/^\d+[\s\.\)]+/, '').trim();
+                
+                if (cleanL.length > 3 && !cleanL.toUpperCase().includes("QUANDO AUTUAR")) atuar.push(cleanL);
+                if (cleanR.length > 3 && !cleanR.toUpperCase().includes("QUANDO NÃO AUTUAR")) naoAtuar.push(cleanR);
+            } else {
+                // Se a linha não tem o divisor, verificamos se ela pertence a uma coluna específica por cabeçalho
+                const clean = line.replace(/^\d+[\s\.\)]+/, '').trim();
+                if (clean.length > 3 && !upper.includes("QUANDO AUTUAR") && !upper.includes("QUANDO NÃO AUTUAR")) {
+                    // Como não tem divisor, assumimos que é uma linha de coluna única (overflow de texto longo)
+                    // Decidimos onde colocar baseado na última coluna populada
+                    if (naoAtuar.length > atuar.length) naoAtuar.push(clean);
+                    else atuar.push(clean);
+                }
+            }
           } else {
-             // Linha simples ou Seção Linear
-             const clean = line.replace(/^\d+[\s\.\)]+/, '').replace(/^•\s*/, '').trim();
-             if (clean.length > 3) {
-                if (activeBucket === 0 && !upper.includes("QUANDO AUTUAR")) atuar.push(clean);
-                else if (activeBucket === 1 && !upper.includes("QUANDO NÃO")) naoAtuar.push(clean);
-                else if (activeBucket === 2) defs.push(clean);
-                else if (activeBucket === 3) ex.push(clean);
-             }
+            // Modo Linear (Definições e Exemplos)
+            const clean = line.replace(/^\d+[\s\.\)]+/, '').replace(/^•\s*/, '').trim();
+            if (clean.length > 3) {
+              if (upper.includes("EXEMPLOS") || ex.length > 0) ex.push(clean);
+              else defs.push(clean);
+            }
           }
         });
 
-        // Limpeza de duplicidade de cabeçalho acidental
-        return { 
-           atuar: atuar.filter(t => !t.toUpperCase().includes("QUANDO AUTUAR")), 
-           naoAtuar: naoAtuar.filter(t => !t.toUpperCase().includes("QUANDO NÃO")), 
-           defs, 
-           ex 
-        };
+        return { atuar, naoAtuar, defs, ex };
       };
 
       const tech = processTechnicalArea();
@@ -239,7 +217,7 @@ export default function App() {
 
       return result;
     } catch (e) {
-      console.error("Erro no processador MBFT 9.0:", e);
+      console.error("Erro no processador MBFT 10.0:", e);
       return null;
     }
   };
@@ -247,7 +225,7 @@ export default function App() {
   const processPDF = async (file: File) => {
     setIsProcessing(true);
     setProgress(0);
-    setBatchStatus('Iniciando Motor Espacial de Reconstrução...');
+    setBatchStatus('Iniciando Motor V10 (Midline Detection)...');
     try {
       const arrayBuffer = await file.arrayBuffer();
       const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
@@ -255,45 +233,53 @@ export default function App() {
       
       for (let i = 1; i <= pdf.numPages; i++) {
         const page = await pdf.getPage(i);
+        const viewport = page.getViewport({ scale: 1.0 });
         const textContent = await page.getTextContent();
         
-        // RECONSTRUÇÃO DE LAYOUT POR COORDENADAS
-        // PDF.js extrai itens soltos; agrupamos por altura (Y) e ordenamos por largura (X)
+        // EIXO CENTRAL DA PÁGINA (Midline)
+        const pageWidth = viewport.width;
+        const midline = pageWidth / 2;
+
         const items = textContent.items.map((item: any) => ({
           str: item.str,
           x: item.transform[4],
           y: item.transform[5]
         }));
 
-        // Agrupa por Y com tolerância de 5 pixels (para textos levemente desalinhados)
+        // Agrupar itens por linha (Y)
         const rows: Record<number, any[]> = {};
         items.forEach(item => {
-          const yKey = Math.round(item.y / 5) * 5;
+          const yKey = Math.round(item.y / 4) * 4; // Tolerância de 4px
           if (!rows[yKey]) rows[yKey] = [];
           rows[yKey].push(item);
         });
 
-        // Ordena linhas de cima para baixo e itens de esquerda para direita
         const sortedY = Object.keys(rows).map(Number).sort((a, b) => b - a);
         let pageText = "";
         
         sortedY.forEach(y => {
           const rowItems = rows[y].sort((a, b) => a.x - b.x);
-          // Adiciona espaços baseados na distância X para preservar colunas
-          let lastX = 0;
-          let rowStr = "";
+          
+          // Reconstruir a linha com marcador de midline "|||"
+          let leftStr = "";
+          let rightStr = "";
+          
           rowItems.forEach(item => {
-            const gap = item.x - lastX;
-            if (gap > 30) rowStr += "    "; // Salto de coluna detectado
-            rowStr += item.str;
-            lastX = item.x + (item.str.length * 5); // Estimativa de fim de X
+            if (item.x < midline) leftStr += " " + item.str;
+            else rightStr += " " + item.str;
           });
-          pageText += rowStr + "\n";
+
+          // Se a linha tem conteúdo em ambos os lados, usamos o divisor
+          if (leftStr.trim() && rightStr.trim()) {
+            pageText += leftStr.trim() + " ||| " + rightStr.trim() + "\n";
+          } else {
+            pageText += (leftStr.trim() || rightStr.trim()) + "\n";
+          }
         });
 
         fullText += `\n\nCONSELHO NACIONAL DE TRÂNSITO\n` + pageText; 
         
-        if (i % 10 === 0 || i === pdf.numPages) {
+        if (i % 5 === 0 || i === pdf.numPages) {
           setProgress(Math.round((i / pdf.numPages) * 100));
           setBatchStatus(`Lendo MBFT: página ${i} de ${pdf.numPages}...`);
           await yieldToBrowser();
@@ -304,7 +290,7 @@ export default function App() {
       alert(`SUCESSO: ${importedCount} infrações configuradas.`);
       setIsAdminPanelOpen(false);
     } catch (e) {
-      alert('Erro ao processar PDF.');
+      alert('Erro no processamento do PDF.');
     } finally {
       setIsProcessing(false);
       setProgress(0);

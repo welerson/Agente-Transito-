@@ -14,15 +14,8 @@ import {
   increment,
   query,
   orderBy,
-  limit,
-  deleteDoc
+  limit
 } from 'firebase/firestore';
-
-// PDF.js worker setup
-declare const pdfjsLib: any;
-if (typeof window !== 'undefined' && 'pdfjsLib' in window) {
-  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-}
 
 const Icons = {
   Search: () => <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>,
@@ -30,11 +23,10 @@ const Icons = {
   Admin: () => <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002 2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>,
   ArrowLeft: () => <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>,
   Logout: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>,
-  Json: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" /></svg>,
-  Flash: () => <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path d="M11 3a1 1 0 00-1 1v5H4a1 1 0 00-.832 1.554l7 10a1 1 0 001.664-1.108L10.832 11H17a1 1 0 00.832-1.554l-7-10A1 1 0 0011 3z" /></svg>,
+  Flash: () => <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path d="M11 3a1 1 0 00-1 1v5H4a1 1 0 00-.832 1.554l7 10a1 1 0 001.664-1.108L10.832 11H17a1 1 0 00.832-1.554l-7-10A1 1 0 0011 3z" /></svg>,
   Trash: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>,
-  Add: () => <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>,
-  File: () => <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>,
+  Plus: () => <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>,
+  Json: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" /></svg>,
 };
 
 const NatureTag: React.FC<{ natureza: Natureza }> = ({ natureza }) => {
@@ -45,10 +37,10 @@ const NatureTag: React.FC<{ natureza: Natureza }> = ({ natureza }) => {
     [Natureza.GRAVISSIMA]: 'bg-red-100 text-red-700',
     [Natureza.NAO_APLICAVEL]: 'bg-slate-100 text-slate-700',
   };
-  return <span className={`px-2 py-0.5 rounded-md text-[10px] font-black uppercase border border-current/10 ${colors[natureza] || colors[Natureza.NAO_APLICAVEL]}`}>{natureza}</span>;
+  return <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase border border-current/10 ${colors[natureza] || colors[Natureza.NAO_APLICAVEL]}`}>{natureza}</span>;
 };
 
-const yieldToBrowser = () => new Promise(resolve => setTimeout(resolve, 0));
+const yieldToBrowser = () => new Promise(resolve => setTimeout(resolve, 10));
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -61,8 +53,6 @@ export default function App() {
   const [progress, setProgress] = useState(0);
   const [batchStatus, setBatchStatus] = useState('');
   const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
-  
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const jsonInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -81,217 +71,124 @@ export default function App() {
   const filteredInfractions = useMemo(() => {
     const q = debouncedSearch.toLowerCase().trim();
     if (!q) return [];
-    return infractions.filter(i => 
-      i.codigo_enquadramento?.includes(q) || 
-      i.titulo_curto?.toLowerCase().includes(q) ||
-      i.artigo?.toLowerCase().includes(q)
-    ).slice(0, 20);
+    return infractions
+      .filter(i => 
+        i.codigo_enquadramento?.includes(q) || 
+        i.titulo_curto?.toLowerCase().includes(q) || 
+        i.artigo?.toLowerCase().includes(q)
+      )
+      .slice(0, 30);
   }, [debouncedSearch, infractions]);
-
-  const topInfractions = useMemo(() => {
-    return [...infractions]
-      .filter(i => (i.count_atuacoes || 0) > 0)
-      .sort((a, b) => (b.count_atuacoes || 0) - (a.count_atuacoes || 0))
-      .slice(0, 5);
-  }, [infractions]);
-
-  // FUNÇÃO CORRIGIDA: APAGAR TUDO (Exclusão em Lote)
-  const handleClearDatabase = async () => {
-    if (!confirm("⚠️ ATENÇÃO: Isso apagará todas as infrações do banco de dados permanentemente. Confirmar?")) return;
-    
-    setIsProcessing(true);
-    setBatchStatus('Limpando banco de dados...');
-    setProgress(10);
-
-    try {
-      const querySnapshot = await getDocs(collection(db, 'infractions'));
-      const totalDocs = querySnapshot.size;
-      
-      if (totalDocs === 0) {
-        alert("O banco já está vazio.");
-        setIsProcessing(false);
-        return;
-      }
-
-      let currentBatch = writeBatch(db);
-      let count = 0;
-      let deletedTotal = 0;
-
-      for (const docSnap of querySnapshot.docs) {
-        currentBatch.delete(docSnap.ref);
-        count++;
-        deletedTotal++;
-
-        // Limite do Firestore por batch é 500
-        if (count >= 400) {
-          await currentBatch.commit();
-          currentBatch = writeBatch(db);
-          count = 0;
-          setProgress(Math.round((deletedTotal / totalDocs) * 100));
-          await yieldToBrowser();
-        }
-      }
-
-      if (count > 0) {
-        await currentBatch.commit();
-      }
-
-      setProgress(100);
-      alert(`Sucesso: ${deletedTotal} infrações removidas.`);
-    } catch (e) {
-      console.error(e);
-      alert("Erro ao limpar banco de dados.");
-    } finally {
-      setIsProcessing(false);
-      setBatchStatus('');
-      setProgress(0);
-    }
-  };
-
-  const processPDF = async (file: File) => {
-    setIsProcessing(true);
-    setProgress(0);
-    setBatchStatus('Extraindo via Bbox...');
-    
-    try {
-      const arrayBuffer = await file.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-      let allFichas: Partial<Infraction>[] = [];
-
-      for (let i = 1; i <= pdf.numPages; i++) {
-        const page = await pdf.getPage(i);
-        const viewport = page.getViewport({ scale: 1.0 });
-        const textContent = await page.getTextContent();
-        const w = viewport.width;
-        const h = viewport.height;
-        
-        const items = textContent.items.map((item: any) => ({
-          str: item.str,
-          x: item.transform[4],
-          y: item.transform[5],
-          w: item.width,
-          h: item.height
-        }));
-
-        let anchorY = 0;
-        items.forEach(it => {
-          if (it.str.toUpperCase().includes("QUANDO AUTUAR")) anchorY = it.y;
-        });
-
-        if (anchorY === 0) continue;
-
-        const colW = w / 4;
-        const boxes = { atuar: [], naoAtuar: [], defs: [], exemplos: [] };
-
-        items.forEach(it => {
-          if (it.y > anchorY - 5 || it.y < 40) return; 
-          if (it.x < colW) boxes.atuar.push(it.str);
-          else if (it.x < colW * 2) boxes.naoAtuar.push(it.str);
-          else if (it.x < colW * 3) boxes.defs.push(it.str);
-          else boxes.exemplos.push(it.str);
-        });
-
-        let codigo = "";
-        let artigo = "";
-        items.forEach(it => {
-          if (it.y > anchorY + 20) {
-            if (it.str.match(/\d{3}-\d{2}/)) codigo = it.str.trim();
-            if (it.str.match(/Art\.\s+\d+/i)) artigo = it.str.trim();
-          }
-        });
-
-        if (codigo) {
-          allFichas.push({
-            id: codigo,
-            codigo_enquadramento: codigo,
-            artigo: artigo || 'N/A',
-            titulo_curto: `Ficha ${codigo}`,
-            quando_atuar: [boxes.atuar.join(" ")],
-            quando_nao_atuar: [boxes.naoAtuar.join(" ")],
-            definicoes_procedimentos: [boxes.defs.join(" ")],
-            exemplos_ait: [boxes.exemplos.join(" ")]
-          });
-        }
-        setProgress(Math.round((i / pdf.numPages) * 100));
-        await yieldToBrowser();
-      }
-
-      let batch = writeBatch(db);
-      let count = 0;
-      for (const ficha of allFichas) {
-        const ref = doc(db, 'infractions', ficha.id!);
-        batch.set(ref, { ...ficha, status: 'ativo', ultima_atualizacao: new Date().toISOString() }, { merge: true });
-        count++;
-        if (count >= 400) { await batch.commit(); batch = writeBatch(db); count = 0; }
-      }
-      if (count > 0) await batch.commit();
-      alert(`${allFichas.length} fichas importadas.`);
-    } catch (e) {
-      alert("Erro no PDF.");
-    } finally {
-      setIsProcessing(false);
-      setProgress(0);
-      setBatchStatus('');
-    }
-  };
 
   const handleJSONUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
     setIsProcessing(true);
-    setBatchStatus('Lendo JSON...');
+    setProgress(0);
+    setBatchStatus('Lendo arquivo JSON...');
+    
     try {
       const text = await file.text();
-      const data = JSON.parse(text);
-      const list = Array.isArray(data) ? data : [data];
+      const jsonData = JSON.parse(text);
       
+      if (!Array.isArray(jsonData)) {
+        alert("O arquivo JSON deve ser uma lista (array) de infrações.");
+        return;
+      }
+
+      setBatchStatus(`Importando ${jsonData.length} registros...`);
+      let currentBatch = writeBatch(db);
+      let count = 0;
+      let total = 0;
+
+      for (let i = 0; i < jsonData.length; i++) {
+        const item = jsonData[i];
+        const id = item.codigo_enquadramento || item.codigo || item.id;
+        
+        if (!id) continue;
+
+        const infractionData: Partial<Infraction> = {
+          ...item,
+          id: String(id),
+          codigo_enquadramento: String(id),
+          status: 'ativo',
+          ultima_atualizacao: new Date().toISOString(),
+          count_atuacoes: item.count_atuacoes || 0
+        };
+
+        const docRef = doc(db, 'infractions', String(id));
+        currentBatch.set(docRef, infractionData, { merge: true });
+        
+        count++;
+        total++;
+        
+        if (count >= 400) {
+          await currentBatch.commit();
+          currentBatch = writeBatch(db);
+          count = 0;
+          setProgress(Math.round(((i + 1) / jsonData.length) * 100));
+          await yieldToBrowser();
+        }
+      }
+
+      if (count > 0) await currentBatch.commit();
+      alert(`Sucesso! ${total} infrações importadas via JSON.`);
+      setIsAdminPanelOpen(false);
+    } catch (e) {
+      alert("Erro ao processar JSON. Verifique o formato.");
+    } finally {
+      setIsProcessing(false);
+      setProgress(0);
+      setBatchStatus('');
+    }
+  };
+
+  const handleClearDatabase = async () => {
+    if (!confirm("⚠️ ATENÇÃO: Isso apagará todas as infrações permanentemente. Confirmar?")) return;
+    setIsProcessing(true);
+    setBatchStatus('Limpando base...');
+    try {
+      const querySnapshot = await getDocs(collection(db, 'infractions'));
       let batch = writeBatch(db);
       let count = 0;
-      for (let i = 0; i < list.length; i++) {
-        const item = list[i];
-        const id = item.codigo_enquadramento || item.codigo || item.id;
-        if (!id) continue;
-        const docRef = doc(db, 'infractions', id);
-        batch.set(docRef, { ...item, id, codigo_enquadramento: id, status: 'ativo', ultima_atualizacao: new Date().toISOString() }, { merge: true });
+      for (const docSnap of querySnapshot.docs) {
+        batch.delete(docSnap.ref);
         count++;
         if (count >= 450) {
           await batch.commit();
           batch = writeBatch(db);
           count = 0;
-          setProgress(Math.round((i / list.length) * 100));
-          await yieldToBrowser();
         }
       }
       if (count > 0) await batch.commit();
-      alert(`Sucesso: ${list.length} registros.`);
-    } catch (e) { alert("Erro no JSON."); } finally { setIsProcessing(false); setBatchStatus(''); }
+      alert("Base limpa com sucesso.");
+    } catch (e) { alert("Erro ao limpar."); } finally { setIsProcessing(false); setBatchStatus(''); }
   };
 
   const handleRecord = async (inf: Infraction) => {
     if (!user) return;
     try {
-      const ref = doc(db, 'infractions', inf.id);
-      await updateDoc(ref, { count_atuacoes: increment(1) });
-      alert("Consulta registrada.");
-    } catch (e) { alert("Erro ao registrar."); }
+      const infRef = doc(db, 'infractions', inf.id);
+      await updateDoc(infRef, { count_atuacoes: increment(1) });
+      alert(`Consulta registrada.`);
+    } catch (e) { alert('Erro ao registrar.'); }
   };
 
   if (!user) {
     return (
-      <div className="min-h-screen bg-blue-900 flex flex-col items-center justify-center p-8">
-        <div className="w-full max-w-sm space-y-8">
-          <div className="text-center">
-            <h1 className="text-4xl font-black text-white italic tracking-tighter">MULTAS RÁPIDAS</h1>
-            <p className="text-blue-300 text-xs font-bold uppercase tracking-widest mt-2">Fiscalização Digital MBFT</p>
-          </div>
-          <div className="bg-white p-8 rounded-[2.5rem] shadow-2xl space-y-4">
-            <input id="login-email" type="email" placeholder="Seu e-mail funcional" className="w-full p-5 bg-slate-50 rounded-2xl outline-none font-bold text-slate-800" />
-            <button onClick={() => {
-              const email = (document.getElementById('login-email') as HTMLInputElement).value;
-              if (!email) return;
-              setUser({ id: 'agt-' + Date.now(), name: 'Agente', email, role: email.includes('admin') ? UserRole.GESTOR : UserRole.AGENTE });
-            }} className="w-full bg-blue-600 text-white py-5 rounded-2xl font-black uppercase shadow-lg active:scale-95 transition-transform">Entrar</button>
-          </div>
+      <div className="min-h-screen bg-blue-900 flex flex-col justify-center px-10">
+        <div className="text-center mb-10">
+          <h1 className="text-4xl font-black text-white italic tracking-tighter">Multas Rápidas</h1>
+          <p className="text-blue-300 text-[10px] font-bold uppercase tracking-widest mt-2">Fiscalização Oficial MBFT</p>
+        </div>
+        <div className="bg-white p-8 rounded-[3rem] shadow-2xl space-y-4">
+          <input type="email" placeholder="E-mail Funcional" className="w-full p-5 bg-slate-50 rounded-3xl outline-none font-bold" id="login-email" />
+          <button onClick={() => {
+            const email = (document.getElementById('login-email') as HTMLInputElement).value;
+            if (!email) return;
+            setUser({ id: 'agt-' + Date.now(), name: 'Agente', email, role: email.includes('admin') ? UserRole.GESTOR : UserRole.AGENTE });
+          }} className="w-full bg-blue-600 text-white py-5 rounded-3xl font-black uppercase shadow-xl btn-active">Acessar</button>
         </div>
       </div>
     );
@@ -299,151 +196,133 @@ export default function App() {
 
   return (
     <div className="flex flex-col h-screen max-w-lg mx-auto bg-slate-50 relative overflow-hidden safe-top">
-      <header className="bg-blue-800 text-white px-6 pt-6 pb-8 sticky top-0 z-20 shadow-xl rounded-b-[2rem] border-b-4 border-blue-900/20">
+      <header className="bg-blue-800 text-white px-6 pt-6 pb-8 sticky top-0 z-20 shadow-xl rounded-b-[2.5rem] border-b-4 border-blue-900/20">
         <div className="flex justify-between items-center mb-6">
           <div className="flex flex-col">
-            <h1 className="text-lg font-black italic">MULTAS RÁPIDAS</h1>
-            <div className="flex items-center gap-1.5 opacity-60">
-              <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-              <span className="text-[9px] font-bold uppercase tracking-wider">{user.role} ONLINE</span>
-            </div>
+            <h1 className="text-xl font-black italic">Multas Rápidas</h1>
+            <span className="text-[9px] font-bold text-blue-300 uppercase">{user.role}</span>
           </div>
-          <button onClick={() => setUser(null)} className="p-2 bg-white/10 rounded-full"><Icons.Logout /></button>
+          <button onClick={() => setUser(null)} className="p-2 opacity-50"><Icons.Logout /></button>
         </div>
 
         {activeTab === 'search' && !selectedInfraction && (
-          <div className="relative group">
-            <div className="absolute inset-y-0 left-5 flex items-center text-blue-400 group-focus-within:text-blue-200"><Icons.Search /></div>
-            <input 
-              className="w-full pl-14 pr-6 py-4 bg-blue-900/40 border border-blue-700/50 rounded-2xl text-white outline-none font-bold text-sm placeholder-blue-300 focus:bg-blue-900/60 transition-all" 
-              placeholder="Código, Artigo ou Descrição..." 
-              value={searchQuery} 
-              onChange={e => setSearchQuery(e.target.value)} 
-            />
+          <div className="relative">
+            <div className="absolute inset-y-0 left-5 flex items-center text-blue-400"><Icons.Search /></div>
+            <input className="w-full pl-14 pr-6 py-4 bg-blue-900/40 border border-blue-700/50 rounded-3xl text-white outline-none font-bold text-sm" placeholder="O que deseja pesquisar?" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
           </div>
         )}
       </header>
 
-      <main className="flex-1 overflow-y-auto px-6 pt-6 pb-32 no-scrollbar">
+      <main className="flex-1 overflow-y-auto px-6 pt-6 pb-40 no-scrollbar">
         {selectedInfraction ? (
-          <div className="space-y-6 animate-in slide-in-from-right duration-300">
-            <button onClick={() => setSelectedInfraction(null)} className="flex items-center gap-2 text-blue-600 font-black uppercase text-[10px] bg-blue-50 px-5 py-3 rounded-xl active:scale-95 transition-all"><Icons.ArrowLeft /> Voltar</button>
-            <div className="bg-white rounded-[2rem] shadow-xl p-8 border border-slate-100">
-              <div className="flex justify-between items-start mb-4">
-                <NatureTag natureza={selectedInfraction.natureza} />
-                <span className="text-3xl font-black text-blue-600 tracking-tighter">{selectedInfraction.codigo_enquadramento}</span>
+          <div className="bg-white rounded-[3rem] shadow-2xl p-8 border border-slate-100 mb-10">
+            <div className="flex justify-between items-center mb-8">
+               <button onClick={() => setSelectedInfraction(null)} className="flex items-center gap-2 text-blue-600 font-black uppercase text-[10px] bg-blue-50 px-5 py-3 rounded-full btn-active"><Icons.ArrowLeft /> Voltar</button>
+               <span className="text-2xl font-black text-blue-600 tracking-tighter">{selectedInfraction.codigo_enquadramento}</span>
+            </div>
+            
+            <div className="space-y-6">
+              <NatureTag natureza={selectedInfraction.natureza} />
+              <h3 className="text-2xl font-black text-slate-900 leading-tight">{selectedInfraction.titulo_curto}</h3>
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Art. {selectedInfraction.artigo}</p>
+
+              <div className="p-6 bg-slate-900 rounded-[2.5rem]">
+                <p className="text-sm text-blue-100 italic leading-relaxed">"{selectedInfraction.descricao}"</p>
               </div>
-              <h3 className="text-2xl font-black text-slate-900 leading-tight mb-4">{selectedInfraction.titulo_curto}</h3>
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-6">Art. {selectedInfraction.artigo}</p>
-              <div className="p-5 bg-slate-900 rounded-2xl mb-8"><p className="text-sm text-blue-100 italic leading-relaxed">"{selectedInfraction.descricao}"</p></div>
-              <div className="space-y-6">
-                <section>
-                  <h4 className="text-[10px] font-black text-green-600 uppercase mb-3 tracking-widest flex items-center gap-2"><div className="w-1.5 h-1.5 bg-green-500 rounded-full"></div> Quando Atuar</h4>
-                  <div className="text-xs text-slate-700 leading-relaxed bg-green-50/50 p-4 rounded-xl border border-green-100">{selectedInfraction.quando_atuar?.map((t, i) => <p key={i} className="mb-2 last:mb-0">• {t}</p>)}</div>
-                </section>
-                <section>
-                  <h4 className="text-[10px] font-black text-red-600 uppercase mb-3 tracking-widest flex items-center gap-2"><div className="w-1.5 h-1.5 bg-red-500 rounded-full"></div> Quando NÃO Atuar</h4>
-                  <div className="text-xs text-slate-700 leading-relaxed bg-red-50/50 p-4 rounded-xl border border-red-100">{selectedInfraction.quando_nao_atuar?.map((t, i) => <p key={i} className="mb-2 last:mb-0">• {t}</p>)}</div>
-                </section>
-                <button onClick={() => handleRecord(selectedInfraction)} className="w-full py-5 bg-blue-600 text-white rounded-2xl font-black uppercase text-xs shadow-lg active:scale-95 transition-all">REGISTRAR CONSULTA</button>
+
+              <div className="space-y-4">
+                <div className="bg-green-50 p-6 rounded-[2rem] border border-green-100">
+                  <h4 className="text-[10px] font-black text-green-700 uppercase mb-3 tracking-widest">Quando Atuar</h4>
+                  <div className="text-xs font-bold text-green-900 space-y-2">
+                    {selectedInfraction.quando_atuar?.map((t, i) => <p key={i}>• {t}</p>)}
+                  </div>
+                </div>
+
+                <div className="bg-red-50 p-6 rounded-[2rem] border border-red-100">
+                  <h4 className="text-[10px] font-black text-red-700 uppercase mb-3 tracking-widest">Quando Não Atuar</h4>
+                  <div className="text-xs font-bold text-red-900 space-y-2">
+                    {selectedInfraction.quando_nao_atuar?.map((t, i) => <p key={i}>• {t}</p>)}
+                  </div>
+                </div>
               </div>
+
+              <button onClick={() => handleRecord(selectedInfraction)} className="w-full py-6 bg-blue-600 text-white rounded-[2rem] font-black uppercase text-xs btn-active shadow-2xl">
+                REGISTRAR CONSULTA
+              </button>
             </div>
           </div>
         ) : (
           <div className="space-y-6">
             {activeTab === 'search' && (
               debouncedSearch ? (
-                <div className="space-y-4 animate-in fade-in duration-300">
+                <div className="space-y-4">
                   {filteredInfractions.map(inf => (
-                    <button key={inf.id} onClick={() => setSelectedInfraction(inf)} className="w-full text-left bg-white p-5 rounded-2xl shadow-sm border border-slate-100 flex flex-col gap-3 active:bg-blue-50 active:scale-[0.98] transition-all">
+                    <button key={inf.id} onClick={() => setSelectedInfraction(inf)} className="w-full text-left bg-white p-6 rounded-[2.5rem] shadow-md border border-slate-100 flex flex-col gap-2 btn-active">
                       <div className="flex justify-between items-center">
                         <NatureTag natureza={inf.natureza} />
-                        <span className="text-[10px] font-black text-blue-600">{inf.codigo_enquadramento}</span>
+                        <span className="text-xs font-black text-blue-600">{inf.codigo_enquadramento}</span>
                       </div>
                       <h3 className="font-black text-slate-800 text-sm leading-tight">{inf.titulo_curto}</h3>
-                      <p className="text-[10px] font-bold text-slate-400">Art. {inf.artigo}</p>
                     </button>
                   ))}
                 </div>
               ) : (
                 <div className="space-y-8">
-                  {topInfractions.length > 0 && (
-                    <div className="bg-white rounded-3xl p-6 shadow-md border border-slate-100">
-                      <h3 className="text-[10px] font-black text-slate-400 uppercase mb-5 flex items-center gap-2 tracking-widest"><Icons.Flash /> MAIS CONSULTADAS</h3>
-                      <div className="space-y-4">
-                        {topInfractions.map((inf, i) => (
-                          <button key={inf.id} onClick={() => setSelectedInfraction(inf)} className="w-full flex justify-between items-center group active:scale-95 transition-transform">
-                            <span className="text-xs font-black text-slate-700 truncate max-w-[70%]">{i+1}. {inf.titulo_curto}</span>
-                            <span className="text-[9px] font-black text-blue-600 bg-blue-50 px-2 py-1 rounded-md">{inf.count_atuacoes}</span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  <div className="flex flex-col items-center justify-center py-20 opacity-20"><Icons.Search /><p className="text-[10px] font-black uppercase mt-4 tracking-widest text-center">Digite o código ou artigo<br/>para iniciar a fiscalização</p></div>
+                  <div className="flex flex-col items-center justify-center py-20 opacity-20 text-center text-slate-400">
+                    <Icons.Search /><p className="font-black text-xs uppercase mt-4 tracking-widest">Digite código ou descrição</p>
+                  </div>
                 </div>
               )
             )}
 
             {activeTab === 'admin' && user.role === UserRole.GESTOR && (
-              <div className="space-y-8 animate-in slide-in-from-bottom duration-300">
+              <div className="space-y-8">
                 <div className="flex justify-between items-end">
                   <div className="space-y-1">
-                    <h2 className="text-3xl font-black text-slate-900 tracking-tighter">GESTÃO</h2>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Base de Dados Local</p>
+                    <h2 className="text-3xl font-black text-slate-900 tracking-tighter">Gestão</h2>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Importação Estruturada</p>
                   </div>
                   <div className="flex gap-2">
-                    <button onClick={() => setIsAdminPanelOpen(!isAdminPanelOpen)} className="bg-blue-600 text-white p-4 rounded-2xl shadow-lg active:scale-90 transition-all"><Icons.Add /></button>
+                    <button onClick={handleClearDatabase} disabled={isProcessing} className="bg-red-500 text-white p-4 rounded-[1.8rem] shadow-xl"><Icons.Trash /></button>
+                    <button onClick={() => setIsAdminPanelOpen(!isAdminPanelOpen)} className="bg-blue-600 text-white p-4 rounded-[1.8rem] shadow-xl"><Icons.Plus /></button>
                   </div>
                 </div>
 
                 {isAdminPanelOpen && (
-                  <div className="bg-white rounded-3xl p-6 shadow-xl border border-blue-50 space-y-4">
-                    <h3 className="text-xs font-black text-blue-600 uppercase tracking-widest flex items-center gap-2">Importar Base</h3>
-                    <div className="grid grid-cols-2 gap-3">
-                      <button onClick={() => jsonInputRef.current?.click()} className="flex flex-col items-center justify-center p-6 bg-slate-900 text-white rounded-2xl gap-2 active:scale-95 transition-all">
-                        <Icons.Json /> <span className="text-[8px] font-black uppercase">JSON</span>
-                      </button>
-                      <button onClick={() => fileInputRef.current?.click()} className="flex flex-col items-center justify-center p-6 bg-blue-600 text-white rounded-2xl gap-2 active:scale-95 transition-all">
-                        <Icons.File /> <span className="text-[8px] font-black uppercase">PDF Bbox</span>
-                      </button>
-                    </div>
+                  <div className="bg-white rounded-[3rem] p-8 shadow-2xl border-4 border-blue-50 space-y-6">
+                    <button 
+                        onClick={() => !isProcessing && jsonInputRef.current?.click()}
+                        className="w-full py-8 bg-slate-900 text-white rounded-[2rem] flex flex-col items-center justify-center gap-2 btn-active"
+                    >
+                        <Icons.Json />
+                        <span className="text-[10px] font-black uppercase">Importar JSON (Base MBFT)</span>
+                    </button>
+
                     {isProcessing && (
-                      <div className="pt-4">
-                        <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
-                          <div className="h-full bg-blue-600 transition-all duration-300" style={{ width: `${progress}%` }}></div>
+                        <div className="text-center">
+                            <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden mb-2">
+                                <div className="h-full bg-blue-600" style={{ width: `${progress}%` }} />
+                            </div>
+                            <p className="text-[10px] font-black uppercase text-blue-600">{batchStatus}</p>
                         </div>
-                        <p className="text-[9px] font-black text-blue-600 uppercase mt-2 text-center">{batchStatus}</p>
-                      </div>
                     )}
                     <input ref={jsonInputRef} type="file" accept=".json" className="hidden" onChange={handleJSONUpload} />
-                    <input ref={fileInputRef} type="file" accept=".pdf" className="hidden" onChange={e => e.target.files?.[0] && processPDF(e.target.files[0])} />
                   </div>
                 )}
-
-                <div className="bg-white rounded-3xl p-6 shadow-md border border-slate-100">
-                   <div className="flex justify-between items-center mb-6">
-                     <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Registros: {infractions.length}</h3>
-                     {/* BOTÃO CORRIGIDO */}
-                     <button 
-                        onClick={handleClearDatabase}
-                        disabled={isProcessing}
-                        className="text-red-500 p-2 hover:bg-red-50 rounded-full transition-colors disabled:opacity-30"
-                      >
-                        <Icons.Trash />
-                      </button>
-                   </div>
-                   <div className="space-y-2 max-h-[300px] overflow-y-auto no-scrollbar">
-                     {infractions.slice(0, 50).map(inf => (
-                       <div key={inf.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100">
-                         <div className="flex-1 min-w-0 pr-4">
-                           <p className="text-[10px] font-black text-blue-600">{inf.codigo_enquadramento}</p>
-                           <p className="text-[10px] font-bold text-slate-800 truncate">{inf.titulo_curto}</p>
-                         </div>
-                         <button onClick={() => setSelectedInfraction(inf)} className="p-2 text-blue-300"><Icons.Search /></button>
-                       </div>
-                     ))}
-                   </div>
+                
+                <div className="bg-white rounded-[3rem] p-8 shadow-xl border border-slate-100">
+                  <h3 className="text-[10px] font-black text-slate-400 uppercase mb-6">Base Local ({infractions.length} multas)</h3>
+                  <div className="space-y-3 max-h-[400px] overflow-y-auto no-scrollbar">
+                    {infractions.slice(0, 50).map(inf => (
+                      <div key={inf.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-[1.8rem]">
+                        <div className="truncate pr-4">
+                          <p className="text-[10px] font-black text-blue-600">{inf.codigo_enquadramento}</p>
+                          <p className="text-xs font-bold text-slate-800 truncate">{inf.titulo_curto}</p>
+                        </div>
+                        <button onClick={() => setSelectedInfraction(inf)} className="text-blue-500"><Icons.Search /></button>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
             )}
@@ -451,17 +330,15 @@ export default function App() {
         )}
       </main>
 
-      {!selectedInfraction && (
-        <div className="fixed bottom-8 left-0 right-0 px-8 z-30">
-          <nav className="max-w-md mx-auto bg-slate-900/90 backdrop-blur-xl rounded-[2.5rem] flex justify-around items-center p-2 border border-white/10 shadow-2xl safe-bottom">
-            <button onClick={() => setActiveTab('search')} className={`p-5 rounded-full transition-all ${activeTab === 'search' ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/40' : 'text-slate-500'}`}><Icons.Search /></button>
-            <button onClick={() => setActiveTab('history')} className={`p-5 rounded-full transition-all ${activeTab === 'history' ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/40' : 'text-slate-500'}`}><Icons.History /></button>
+      <div className="fixed bottom-10 left-0 right-0 px-8 z-30">
+          <nav className="max-w-md mx-auto bg-slate-900/95 backdrop-blur-2xl rounded-[3.5rem] flex justify-around items-center p-3 border border-white/10 shadow-2xl safe-bottom">
+            <button onClick={() => setActiveTab('search')} className={`p-4 rounded-full transition-all ${activeTab === 'search' ? 'bg-blue-600 text-white' : 'text-slate-500'}`}><Icons.Search /></button>
+            <button onClick={() => setActiveTab('history')} className={`p-4 rounded-full transition-all ${activeTab === 'history' ? 'bg-blue-600 text-white' : 'text-slate-500'}`}><Icons.History /></button>
             {user.role === UserRole.GESTOR && (
-              <button onClick={() => setActiveTab('admin')} className={`p-5 rounded-full transition-all ${activeTab === 'admin' ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/40' : 'text-slate-500'}`}><Icons.Admin /></button>
+              <button onClick={() => setActiveTab('admin')} className={`p-4 rounded-full transition-all ${activeTab === 'admin' ? 'bg-blue-600 text-white' : 'text-slate-500'}`}><Icons.Admin /></button>
             )}
           </nav>
-        </div>
-      )}
+      </div>
     </div>
   );
 }

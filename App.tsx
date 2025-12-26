@@ -7,13 +7,11 @@ import {
   doc, 
   setDoc, 
   updateDoc, 
-  deleteDoc,
-  increment, 
   collection, 
   onSnapshot,
-  addDoc,
   writeBatch,
-  getDocs
+  getDocs,
+  increment
 } from 'firebase/firestore';
 
 declare const pdfjsLib: any;
@@ -22,7 +20,7 @@ if (typeof window !== 'undefined' && 'pdfjsLib' in window) {
 }
 
 const Icons = {
-  Search: () => <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>,
+  Search: () => <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7(7 0 11-14 0 7 7 0 0114 0z" /></svg>,
   History: () => <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
   Admin: () => <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002 2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>,
   ArrowLeft: () => <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>,
@@ -103,10 +101,11 @@ export default function App() {
       .slice(0, 10);
   }, [infractions]);
 
+  // MOTOR DE EXTRAÇÃO MBFT 8.0 - SOLUÇÃO FINAL PARA CAMPOS VAZIOS
   const parseManualText = (rawText: string): Partial<Infraction> | null => {
     try {
+      // 1. Limpeza de ruído e normalização
       const content = rawText.replace(/[ \t]+/g, ' ').replace(/\r\n/g, '\n');
-      const sections: Record<string, string> = {};
       
       const headerPatterns = [
         { key: 'titulo_curto', regex: /Tipifica[çc][ãa]o\s+Resumida/i },
@@ -123,11 +122,13 @@ export default function App() {
         { key: 'fim_ficha', regex: /CONSELHO\s+NACIONAL\s+DE\s+TR[ÃA]NSITO/i }
       ];
 
+      // Localiza todos os marcadores de início de seção
       const markers = headerPatterns.map(h => {
         const match = content.match(h.regex);
         return { key: h.key, label: match ? match[0] : null, index: match ? match.index : -1 };
       }).filter(m => m.index !== -1).sort((a, b) => a.index - b.index);
 
+      const sections: Record<string, string> = {};
       markers.forEach((marker, i) => {
         const start = marker.index! + marker.label!.length;
         const nextMarker = markers[i + 1];
@@ -139,74 +140,88 @@ export default function App() {
 
       if (!sections.codigo_enquadramento) return null;
 
-      const processTechnicalSection = () => {
+      // 2. PROCESSADOR DE ÁREA TÉCNICA UNIFICADA (Resiliência a colunas paralelas)
+      const processTechnicalArea = () => {
         const atuar: string[] = [];
         const naoAtuar: string[] = [];
         const defs: string[] = [];
         const ex: string[] = [];
 
-        const startIdx = markers.find(m => m.key === 'atuar_header')?.index || -1;
-        const endIdx = markers.find(m => m.key === 'fim_ficha' && m.index > startIdx)?.index || content.length;
-        const techRaw = content.substring(startIdx, endIdx);
-
-        const lines = techRaw.split('\n').map(l => l.trim()).filter(l => l.length > 2);
-        let activeBucket = 0; // 0=Atuar, 1=NaoAtuar, 2=Defs, 3=Exemplos
+        // Definimos a zona técnica: de "Quando Autuar" até o fim da ficha
+        const startPoint = markers.find(m => m.key === 'atuar_header')?.index || 0;
+        const endPoint = markers.find(m => m.key === 'fim_ficha' && m.index > startPoint)?.index || content.length;
+        const technicalBlock = content.substring(startPoint, endPoint);
+        
+        const lines = technicalBlock.split('\n').filter(l => l.trim().length > 1);
+        
+        // Buckets: 0=Atuar, 1=NaoAtuar, 2=Definições, 3=Exemplos
+        let activeBucket = 0; 
 
         lines.forEach(line => {
-          const upper = line.toUpperCase();
-          if (upper.includes("QUANDO AUTUAR") && upper.includes("QUANDO NÃO AUTUAR")) {
-            activeBucket = 0; return;
-          }
-          if (upper.includes("QUANDO NÃO AUTUAR")) { activeBucket = 1; return; }
+          const upper = line.toUpperCase().trim();
+          
+          // Troca de Balde por Cabeçalho
+          if (upper.includes("QUANDO NÃO AUTUAR")) { activeBucket = 1; }
           if (upper.includes("DEFINIÇÕES E PROCEDIMENTOS")) { activeBucket = 2; return; }
           if (upper.includes("EXEMPLOS DO CAMPO")) { activeBucket = 3; return; }
+          if (upper.includes("CONSELHO NACIONAL")) return;
 
-          const items = line.split(/(\s\d+[\s\.\)]+)/);
-          if (items.length >= 3 && activeBucket === 0) {
-            const part1 = items[0].replace(/^\d+[\s\.\)]+/, '').trim();
-            const part2 = items.slice(2).join('').trim();
-            if (part1.length > 3) atuar.push(part1);
-            if (part2.length > 3) naoAtuar.push(part2);
+          // LOGICA DE SPLIT DE COLUNA (Caso as colunas estejam na mesma linha do texto extraído)
+          // Padrão do MBFT: "1. Texto da Esquerda 1. Texto da Direita"
+          const columnSplitRegex = /(\s\d+[\s\.\)]+)/; 
+          const parts = line.split(columnSplitRegex);
+
+          if (parts.length >= 3 && activeBucket <= 1) {
+            // Se detectamos uma numeração no meio da linha, quebramos em dois
+            const left = parts[0].replace(/^\d+[\s\.\)]+/, '').trim();
+            const right = parts.slice(2).join('').trim();
+            
+            // Filtro para não pegar o próprio título como item
+            if (left.length > 3 && !left.toUpperCase().includes("QUANDO AUTUAR")) atuar.push(left);
+            if (right.length > 3 && !right.toUpperCase().includes("QUANDO NÃO")) naoAtuar.push(right);
           } else {
-            const clean = line.replace(/^\d+[\s\.\)]+/, '').trim();
-            if (clean.length < 5) return;
-            if (upper.includes("QUANDO AUTUAR") || upper.includes("QUANDO NÃO")) return;
-            if (activeBucket === 0) atuar.push(clean);
-            else if (activeBucket === 1) naoAtuar.push(clean);
-            else if (activeBucket === 2) defs.push(clean);
-            else if (activeBucket === 3) ex.push(clean);
+            // Se for linha simples, limpa e joga no balde atual
+            const clean = line.replace(/^\d+[\s\.\)]+/, '').replace(/^•\s*/, '').trim();
+            if (clean.length > 3) {
+                if (activeBucket === 0 && !upper.includes("QUANDO AUTUAR")) atuar.push(clean);
+                else if (activeBucket === 1 && !upper.includes("QUANDO NÃO")) naoAtuar.push(clean);
+                else if (activeBucket === 2) defs.push(clean);
+                else if (activeBucket === 3) ex.push(clean);
+            }
           }
         });
+
         return { atuar, naoAtuar, defs, ex };
       };
 
-      const tech = processTechnicalSection();
+      const tech = processTechnicalArea();
 
+      // Montagem do objeto final
       const result: Partial<Infraction> = {
         id: sections.codigo_enquadramento.match(/[\d-]+/)?.[0] || sections.codigo_enquadramento,
         codigo_enquadramento: sections.codigo_enquadramento.match(/[\d-]+/)?.[0] || sections.codigo_enquadramento,
         artigo: sections.artigo?.split('\n')[0].trim() || '',
         titulo_curto: sections.titulo_curto?.split('\n')[0].trim() || 'Ficha ' + sections.codigo_enquadramento,
         descricao: sections.descricao?.replace(/\n/g, ' ').trim() || '',
-        quando_atuar: tech.atuar.length > 0 ? tech.atuar : [],
-        quando_nao_atuar: tech.naoAtuar.length > 0 ? tech.naoAtuar : [],
-        definicoes_procedimentos: tech.defs.length > 0 ? tech.defs : [],
-        exemplos_ait: tech.ex.length > 0 ? tech.ex : [],
+        quando_atuar: tech.atuar,
+        quando_nao_atuar: tech.naoAtuar,
+        definicoes_procedimentos: tech.defs,
+        exemplos_ait: tech.ex,
         penalidade: sections.penalidade?.split('\n')[0].trim() || 'Multa',
         medidas_administrativas: sections.medida_admin ? [sections.medida_admin.split('\n')[0].trim()] : []
       };
 
+      // Determinação de Natureza
       const grav = (sections.gravidade || '').toLowerCase();
-      if (grav.includes('leve')) result.natureza = Natureza.LEVE;
-      else if (grav.includes('grave') && !grav.includes('gravíssima')) result.natureza = Natureza.GRAVE;
-      else if (grav.includes('gravíssima')) result.natureza = Natureza.GRAVISSIMA;
-      else if (grav.includes('méd')) result.natureza = Natureza.MEDIA;
-      else if (grav.includes('não aplicável') || grav.includes('n/a')) result.natureza = Natureza.NAO_APLICAVEL;
-      else result.natureza = Natureza.MEDIA;
+      if (grav.includes('leve')) { result.natureza = Natureza.LEVE; result.pontos = 3; }
+      else if (grav.includes('gravíssima')) { result.natureza = Natureza.GRAVISSIMA; result.pontos = 7; }
+      else if (grav.includes('grave')) { result.natureza = Natureza.GRAVE; result.pontos = 5; }
+      else if (grav.includes('méd')) { result.natureza = Natureza.MEDIA; result.pontos = 4; }
+      else { result.natureza = Natureza.NAO_APLICAVEL; result.pontos = 0; }
 
       return result;
     } catch (e) {
-      console.error("Erro no processador MBFT:", e);
+      console.error("Erro no processador MBFT 8.0:", e);
       return null;
     }
   };
@@ -385,7 +400,6 @@ export default function App() {
                 <p className="text-sm text-blue-100 italic leading-relaxed">"{selectedInfraction.descricao}"</p>
               </div>
 
-              {/* DESMEMBRAMENTO DAS INFORMAÇÕES TÉCNICAS */}
               <div className="space-y-6">
                 <div className="bg-green-50 p-6 rounded-[2rem] border border-green-100">
                   <h4 className="text-[10px] font-black text-green-700 uppercase mb-4 tracking-widest">Quando Atuar</h4>

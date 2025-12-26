@@ -55,7 +55,7 @@ export default function App() {
   const [selectedInfraction, setSelectedInfraction] = useState<Infraction | null>(null);
   const [infractions, setInfractions] = useState<Infraction[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [progress, setProgress] = useState(progress => 0);
+  const [progress, setProgress] = useState(0);
   const [batchStatus, setBatchStatus] = useState('');
   const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -85,11 +85,11 @@ export default function App() {
       .slice(0, 30);
   }, [debouncedSearch, infractions]);
 
-  // MOTOR DE EXTRAÇÃO LINEAR INTELIGENTE (MBFT)
+  // MOTOR DE EXTRAÇÃO LINEAR INTELIGENTE (MBFT) - CORREÇÃO DE NATUREZA
   const processPDF = async (file: File) => {
     setIsProcessing(true);
     setProgress(0);
-    setBatchStatus('Analisando estrutura MBFT...');
+    setBatchStatus('Iniciando análise MBFT...');
     
     try {
       const arrayBuffer = await file.arrayBuffer();
@@ -99,7 +99,6 @@ export default function App() {
       for (let i = 1; i <= pdf.numPages; i++) {
         const page = await pdf.getPage(i);
         const textContent = await page.getTextContent();
-        
         const strings = textContent.items.map((item: any) => item.str);
         const fullText = strings.join(' ');
 
@@ -117,7 +116,7 @@ export default function App() {
         const idxResumida = strings.findIndex(s => s.includes("Tipificação Resumida:"));
         const idxCodigoLabel = strings.findIndex(s => s.includes("Código do Enquadramento:"));
         
-        if (idxResumida !== -1 && idxCodigoLabel !== -1 && idxCodigoLabel > idxResumida) {
+        if (idxResumida !== -1 && idxCodigoLabel !== -1) {
           titulo = strings.slice(idxResumida + 1, idxCodigoLabel).join(' ').trim();
         } else {
           const fallbackMatch = fullText.match(/Tipificação Resumida:(.*?)Código do Enquadramento:/i);
@@ -128,19 +127,21 @@ export default function App() {
         let descricao = "";
         const idxEnquadramento = strings.findIndex(s => s.includes("Tipificação do Enquadramento:"));
         const idxGravidadeLabel = strings.findIndex(s => s.includes("Gravidade:"));
-
-        if (idxEnquadramento !== -1 && idxGravidadeLabel !== -1 && idxGravidadeLabel > idxEnquadramento) {
+        if (idxEnquadramento !== -1 && idxGravidadeLabel !== -1) {
           descricao = strings.slice(idxEnquadramento + 1, idxGravidadeLabel).join(' ').trim();
         }
 
-        // CAPTURA DE GRAVIDADE (NATUREZA) - NOVO
+        // CAPTURA DE NATUREZA (GRAVIDADE) - Lógica de varredura profunda
         let natureza: Natureza = Natureza.NAO_APLICAVEL;
-        if (idxGravidadeLabel !== -1 && strings[idxGravidadeLabel + 1]) {
-           const val = strings[idxGravidadeLabel + 1].trim().toLowerCase();
-           if (val.includes("gravíssima")) natureza = Natureza.GRAVISSIMA;
-           else if (val.includes("grave")) natureza = Natureza.GRAVE;
-           else if (val.includes("média") || val.includes("media")) natureza = Natureza.MEDIA;
-           else if (val.includes("leve")) natureza = Natureza.LEVE;
+        if (idxGravidadeLabel !== -1) {
+          // Varre as próximas 15 strings para achar a natureza, evitando o erro da leitura por colunas
+          const searchWindow = strings.slice(idxGravidadeLabel + 1, idxGravidadeLabel + 15).join(' ').toLowerCase();
+          
+          if (searchWindow.includes("gravíssima")) natureza = Natureza.GRAVISSIMA;
+          else if (searchWindow.includes("grave")) natureza = Natureza.GRAVE;
+          else if (searchWindow.includes("média") || searchWindow.includes("media")) natureza = Natureza.MEDIA;
+          else if (searchWindow.includes("leve")) natureza = Natureza.LEVE;
+          else if (searchWindow.includes("não aplicável") || searchWindow.includes("nao aplicavel")) natureza = Natureza.NAO_APLICAVEL;
         }
 
         // Divisão das colunas inferiores
@@ -188,11 +189,11 @@ export default function App() {
       }
       if (count > 0) await batch.commit();
       
-      alert(`Importação concluída: ${allFichas.length} infrações.`);
+      alert(`Sucesso! ${allFichas.length} fichas carregadas com naturezas corrigidas.`);
       setIsAdminPanelOpen(false);
     } catch (e) {
       console.error(e);
-      alert("Erro no processamento do PDF.");
+      alert("Erro ao processar PDF.");
     } finally {
       setIsProcessing(false);
       setProgress(0);
@@ -218,7 +219,7 @@ export default function App() {
         }
       }
       if (count > 0) await batch.commit();
-      alert("Base limpa.");
+      alert("Banco de dados reiniciado.");
     } catch (e) { alert("Erro ao limpar."); } finally { setIsProcessing(false); setBatchStatus(''); }
   };
 
@@ -264,7 +265,7 @@ export default function App() {
         {activeTab === 'search' && !selectedInfraction && (
           <div className="relative group">
             <div className="absolute inset-y-0 left-5 flex items-center text-blue-400 group-focus-within:text-blue-200 transition-colors"><Icons.Search /></div>
-            <input className="w-full pl-14 pr-6 py-4 bg-blue-900/40 border border-blue-700/50 rounded-3xl text-white outline-none font-bold text-sm placeholder-blue-300/50" placeholder="Pesquisar por palavras-chave..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
+            <input className="w-full pl-14 pr-6 py-4 bg-blue-900/40 border border-blue-700/50 rounded-3xl text-white outline-none font-bold text-sm placeholder-blue-300/50" placeholder="Código, Artigo ou Palavra-chave..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
           </div>
         )}
       </header>
@@ -288,14 +289,14 @@ export default function App() {
 
               <div className="space-y-4">
                 <div className="bg-green-50 p-6 rounded-[2rem] border border-green-100">
-                  <h4 className="text-[10px] font-black text-green-700 uppercase mb-3 tracking-widest flex items-center gap-2">Quando Atuar</h4>
+                  <h4 className="text-[10px] font-black text-green-700 uppercase mb-3 tracking-widest">Quando Atuar</h4>
                   <div className="text-xs font-bold text-green-900 space-y-2 leading-relaxed">
                     {selectedInfraction.quando_atuar?.map((t, i) => <p key={i}>• {t}</p>)}
                   </div>
                 </div>
 
                 <div className="bg-red-50 p-6 rounded-[2rem] border border-red-100">
-                  <h4 className="text-[10px] font-black text-red-700 uppercase mb-3 tracking-widest flex items-center gap-2">Quando Não Atuar</h4>
+                  <h4 className="text-[10px] font-black text-red-700 uppercase mb-3 tracking-widest">Quando Não Atuar</h4>
                   <div className="text-xs font-bold text-red-900 space-y-2 leading-relaxed">
                     {selectedInfraction.quando_nao_atuar?.map((t, i) => <p key={i}>• {t}</p>)}
                   </div>
@@ -325,7 +326,7 @@ export default function App() {
               ) : (
                 <div className="space-y-8">
                   <div className="flex flex-col items-center justify-center py-20 opacity-20 text-center text-slate-400">
-                    <Icons.Search /><p className="font-black text-xs uppercase mt-4 tracking-widest">Busque por qualquer termo...</p>
+                    <Icons.Search /><p className="font-black text-xs uppercase mt-4 tracking-widest">Aguardando comando...</p>
                   </div>
                 </div>
               )
@@ -336,7 +337,7 @@ export default function App() {
                 <div className="flex justify-between items-end px-2">
                   <div className="space-y-1">
                     <h2 className="text-3xl font-black text-slate-900 tracking-tighter">Gestão</h2>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Importação Inteligente MBFT</p>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Configurações MBFT</p>
                   </div>
                   <div className="flex gap-3">
                     <button onClick={handleClearDatabase} disabled={isProcessing} className="bg-red-500 text-white p-4 rounded-2xl shadow-xl active:scale-90 transition-all disabled:opacity-30"><Icons.Trash /></button>
@@ -352,8 +353,8 @@ export default function App() {
                     >
                         <Icons.File />
                         <div className="text-center">
-                          <span className="text-[10px] font-black uppercase block">Carregar PDF MBFT</span>
-                          <span className="text-[8px] opacity-40 uppercase">Extração de Título e Gravidade</span>
+                          <span className="text-[10px] font-black uppercase block">Importar Fichas MBFT</span>
+                          <span className="text-[8px] opacity-40 uppercase">Extração Inteligente de Natureza</span>
                         </div>
                     </button>
 
@@ -370,7 +371,7 @@ export default function App() {
                 )}
                 
                 <div className="bg-white rounded-[3rem] p-8 shadow-xl border border-slate-100">
-                  <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-6">Infrações Ativas ({infractions.length})</h3>
+                  <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-6">Base Atual ({infractions.length} registros)</h3>
                   <div className="space-y-3 max-h-[400px] overflow-y-auto no-scrollbar">
                     {infractions.slice(0, 50).map(inf => (
                       <div key={inf.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-[1.8rem] border border-slate-100 active:bg-blue-50 transition-colors">
@@ -378,7 +379,7 @@ export default function App() {
                           <p className="text-[10px] font-black text-blue-600">{inf.codigo_enquadramento}</p>
                           <p className="text-xs font-bold text-slate-800 truncate">{inf.titulo_curto}</p>
                         </div>
-                        <button onClick={() => setSelectedInfraction(inf)} className="text-blue-300 hover:text-blue-600 transition-colors"><Icons.Search /></button>
+                        <NatureTag natureza={inf.natureza} />
                       </div>
                     ))}
                   </div>

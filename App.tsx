@@ -29,7 +29,7 @@ const Icons = {
   ArrowLeft: () => <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>,
   Logout: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>,
   Flash: () => <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path d="M11 3a1 1 0 00-1 1v5H4a1 1 0 00-.832 1.554l7 10a1 1 0 001.664-1.108L10.832 11H17a1 1 0 00.832-1.554l-7-10A1 1 0 0011 3z" /></svg>,
-  Trash: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>,
+  Trash: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>,
   Plus: () => <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>,
   File: () => <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>,
 };
@@ -85,11 +85,11 @@ export default function App() {
       .slice(0, 30);
   }, [debouncedSearch, infractions]);
 
-  // MOTOR DE EXTRAÇÃO LINEAR (RESTORED - SEM BBOX)
+  // MOTOR DE EXTRAÇÃO LINEAR INTELIGENTE (MBFT)
   const processPDF = async (file: File) => {
     setIsProcessing(true);
     setProgress(0);
-    setBatchStatus('Processando conteúdo do PDF...');
+    setBatchStatus('Analisando estrutura MBFT...');
     
     try {
       const arrayBuffer = await file.arrayBuffer();
@@ -100,48 +100,57 @@ export default function App() {
         const page = await pdf.getPage(i);
         const textContent = await page.getTextContent();
         
-        // Extração linear das strings
         const strings = textContent.items.map((item: any) => item.str);
         const fullText = strings.join(' ');
 
         // Captura do Código (Padrão 000-00)
         const codigoMatch = fullText.match(/(\d{3}-\d{2})/);
         const codigo = codigoMatch ? codigoMatch[1] : null;
-
         if (!codigo) continue;
 
         // Captura do Artigo
         const artigoMatch = fullText.match(/Art\.\s+\d+[^\s]*/i);
-        const artigo = artigoMatch ? artigoMatch[0] : 'Consultar MBFT';
+        const artigo = artigoMatch ? artigoMatch[0] : 'MBFT';
 
-        // Melhoria na captura de Título (Pega as primeiras linhas significativas que não sejam o código/artigo)
+        // CAPTURA DE TÍTULO (Tipificação Resumida)
         let titulo = "";
-        const potentialTitles = strings.filter(s => 
-          s.trim().length > 10 && 
-          !s.match(/\d{3}-\d{2}/) && 
-          !s.toLowerCase().includes('art.') &&
-          !s.toLowerCase().includes('mbft')
-        );
-        titulo = potentialTitles[0] || `Infração ${codigo}`;
-
-        // Divisão por seções (Regex case-insensitive)
-        const sections = fullText.split(/(QUANDO AUTUAR|QUANDO NÃO AUTUAR|DEFINIÇÕES E PROCEDIMENTOS|EXEMPLOS DE AIT)/i);
+        const idxResumida = strings.findIndex(s => s.includes("Tipificação Resumida:"));
+        const idxCodigoLabel = strings.findIndex(s => s.includes("Código do Enquadramento:"));
         
-        const getSectionContent = (header: string) => {
-          const index = sections.findIndex(s => s.toUpperCase() === header.toUpperCase());
-          return index !== -1 ? sections[index + 1].trim() : "Informação não encontrada nesta ficha.";
+        if (idxResumida !== -1 && idxCodigoLabel !== -1 && idxCodigoLabel > idxResumida) {
+          titulo = strings.slice(idxResumida + 1, idxCodigoLabel).join(' ').trim();
+        } else {
+          // Fallback caso a estrutura mude levemente
+          const fallbackMatch = fullText.match(/Tipificação Resumida:(.*?)Código do Enquadramento:/i);
+          titulo = fallbackMatch ? fallbackMatch[1].trim() : `Infração ${codigo}`;
+        }
+
+        // CAPTURA DE DESCRIÇÃO (Tipificação do Enquadramento)
+        let descricao = "";
+        const idxEnquadramento = strings.findIndex(s => s.includes("Tipificação do Enquadramento:"));
+        const idxGravidade = strings.findIndex(s => s.includes("Gravidade:"));
+
+        if (idxEnquadramento !== -1 && idxGravidade !== -1 && idxGravidade > idxEnquadramento) {
+          descricao = strings.slice(idxEnquadramento + 1, idxGravidade).join(' ').trim();
+        }
+
+        // Divisão das colunas inferiores
+        const sections = fullText.split(/(Quando AUTUAR|Quando NÃO Autuar|Definições e Procedimentos|Exemplos do Campo de Observações do AIT:)/i);
+        const getSection = (header: string) => {
+          const idx = sections.findIndex(s => s.toLowerCase() === header.toLowerCase());
+          return idx !== -1 ? sections[idx + 1].trim() : "Não disponível";
         };
 
         allFichas.push({
           id: codigo,
           codigo_enquadramento: codigo,
           artigo: artigo,
-          titulo_curto: titulo.trim(),
-          descricao: titulo.trim(), // Na extração linear, título e descrição costumam se misturar no topo
-          quando_atuar: [getSectionContent("QUANDO AUTUAR")],
-          quando_nao_atuar: [getSectionContent("QUANDO NÃO AUTUAR")],
-          definicoes_procedimentos: [getSectionContent("DEFINIÇÕES E PROCEDIMENTOS")],
-          exemplos_ait: [getSectionContent("EXEMPLOS DE AIT")],
+          titulo_curto: titulo || `Infração ${codigo}`,
+          descricao: descricao || titulo,
+          quando_atuar: [getSection("Quando AUTUAR")],
+          quando_nao_atuar: [getSection("Quando NÃO Autuar")],
+          definicoes_procedimentos: [getSection("Definições e Procedimentos")],
+          exemplos_ait: [getSection("Exemplos do Campo de Observações do AIT:")],
           natureza: Natureza.NAO_APLICAVEL,
           status: 'ativo'
         });
@@ -150,7 +159,7 @@ export default function App() {
         await yieldToBrowser();
       }
 
-      // Salvamento em Batch no Firestore
+      // Commit em Lote
       let batch = writeBatch(db);
       let count = 0;
       for (const ficha of allFichas) {
@@ -170,11 +179,11 @@ export default function App() {
       }
       if (count > 0) await batch.commit();
       
-      alert(`Sucesso! ${allFichas.length} infrações foram carregadas.`);
+      alert(`Importação concluída: ${allFichas.length} infrações.`);
       setIsAdminPanelOpen(false);
     } catch (e) {
       console.error(e);
-      alert("Erro ao ler o PDF. Tente outro arquivo.");
+      alert("Erro no processamento do PDF.");
     } finally {
       setIsProcessing(false);
       setProgress(0);
@@ -183,9 +192,9 @@ export default function App() {
   };
 
   const handleClearDatabase = async () => {
-    if (!confirm("⚠️ ATENÇÃO: Isso apagará todas as infrações permanentemente. Confirmar?")) return;
+    if (!confirm("⚠️ APAGAR TODA A BASE DE DADOS?")) return;
     setIsProcessing(true);
-    setBatchStatus('Limpando Banco de Dados...');
+    setBatchStatus('Limpando...');
     try {
       const querySnapshot = await getDocs(collection(db, 'infractions'));
       let batch = writeBatch(db);
@@ -200,14 +209,8 @@ export default function App() {
         }
       }
       if (count > 0) await batch.commit();
-      alert("Banco de dados limpo com sucesso.");
-    } catch (e) { 
-      console.error(e);
-      alert("Erro ao limpar base."); 
-    } finally { 
-      setIsProcessing(false); 
-      setBatchStatus(''); 
-    }
+      alert("Base limpa.");
+    } catch (e) { alert("Erro ao limpar."); } finally { setIsProcessing(false); setBatchStatus(''); }
   };
 
   const handleRecord = async (inf: Infraction) => {
@@ -252,7 +255,7 @@ export default function App() {
         {activeTab === 'search' && !selectedInfraction && (
           <div className="relative group">
             <div className="absolute inset-y-0 left-5 flex items-center text-blue-400 group-focus-within:text-blue-200 transition-colors"><Icons.Search /></div>
-            <input className="w-full pl-14 pr-6 py-4 bg-blue-900/40 border border-blue-700/50 rounded-3xl text-white outline-none font-bold text-sm placeholder-blue-300/50" placeholder="Pesquisar enquadramento..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
+            <input className="w-full pl-14 pr-6 py-4 bg-blue-900/40 border border-blue-700/50 rounded-3xl text-white outline-none font-bold text-sm placeholder-blue-300/50" placeholder="Pesquisar por palavras-chave..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
           </div>
         )}
       </header>
@@ -306,14 +309,14 @@ export default function App() {
                         <NatureTag natureza={inf.natureza} />
                         <span className="text-xs font-black text-blue-600">{inf.codigo_enquadramento}</span>
                       </div>
-                      <h3 className="font-black text-slate-800 text-sm leading-tight line-clamp-2">{inf.titulo_curto}</h3>
+                      <h3 className="font-black text-slate-800 text-sm leading-tight line-clamp-3">{inf.titulo_curto}</h3>
                     </button>
                   ))}
                 </div>
               ) : (
                 <div className="space-y-8">
                   <div className="flex flex-col items-center justify-center py-20 opacity-20 text-center text-slate-400">
-                    <Icons.Search /><p className="font-black text-xs uppercase mt-4 tracking-widest">Aguardando busca...</p>
+                    <Icons.Search /><p className="font-black text-xs uppercase mt-4 tracking-widest">Busque por qualquer termo...</p>
                   </div>
                 </div>
               )
@@ -324,7 +327,7 @@ export default function App() {
                 <div className="flex justify-between items-end px-2">
                   <div className="space-y-1">
                     <h2 className="text-3xl font-black text-slate-900 tracking-tighter">Gestão</h2>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Importação Oficial MBFT</p>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Importação Inteligente MBFT</p>
                   </div>
                   <div className="flex gap-3">
                     <button onClick={handleClearDatabase} disabled={isProcessing} className="bg-red-500 text-white p-4 rounded-2xl shadow-xl active:scale-90 transition-all disabled:opacity-30"><Icons.Trash /></button>
@@ -341,7 +344,7 @@ export default function App() {
                         <Icons.File />
                         <div className="text-center">
                           <span className="text-[10px] font-black uppercase block">Carregar PDF MBFT</span>
-                          <span className="text-[8px] opacity-40 uppercase">Extração Linear de Texto</span>
+                          <span className="text-[8px] opacity-40 uppercase">Extração de Título Resumido</span>
                         </div>
                     </button>
 

@@ -101,7 +101,7 @@ export default function App() {
       .slice(0, 10);
   }, [infractions]);
 
-  // MOTOR DE EXTRAÇÃO MBFT 10.0 - RECONSTRUÇÃO POR COORDENADAS E EIXO CENTRAL
+  // MOTOR DE EXTRAÇÃO MBFT 11.0 - CLUSTERING DINÂMICO
   const parseManualText = (rawText: string): Partial<Infraction> | null => {
     try {
       const content = rawText.replace(/\r\n/g, '\n');
@@ -138,53 +138,49 @@ export default function App() {
 
       if (!sections.codigo_enquadramento) return null;
 
-      // PROCESSADOR V10 - DIVISÃO POR CANAIS DE COLUNA
+      // PROCESSADOR V11 - BASEADO EM CANAIS DE TEXTO (COLUNAS REAIS)
       const processTechnicalArea = () => {
         const atuar: string[] = [];
         const naoAtuar: string[] = [];
         const defs: string[] = [];
         const ex: string[] = [];
 
-        // Identifica o bloco técnico (da ficha até o rodapé)
         const startIdx = markers.find(m => m.key === 'atuar_header')?.index || 0;
         const endIdx = markers.find(m => m.key === 'fim_ficha' && m.index > startIdx)?.index || content.length;
         const block = content.substring(startIdx, endIdx);
         
         const lines = block.split('\n').filter(l => l.trim().length > 1);
-        let linearMode = false; // Se vira true, para de tentar separar colunas (Definições/Exemplos)
+        let linearMode = false;
 
         lines.forEach(line => {
           const upper = line.toUpperCase();
-          
-          if (upper.includes("DEFINIÇÕES E PROCEDIMENTOS")) { linearMode = true; return; }
-          if (upper.includes("EXEMPLOS DO CAMPO")) { linearMode = true; return; }
+          if (upper.includes("DEFINIÇÕES E PROCEDIMENTOS") || upper.includes("EXEMPLOS DO CAMPO")) {
+            linearMode = true;
+          }
 
           if (!linearMode) {
-            // DETECÇÃO DE SPLIT POR EIXO VIRTUAL (MARCADOR DE COLUNA "|||")
-            // Na extração PDF (abaixo), inserimos "|||" quando o texto cruza o centro da página
-            if (line.includes("|||")) {
-                const [left, right] = line.split("|||");
-                const cleanL = left.replace(/^\d+[\s\.\)]+/, '').trim();
-                const cleanR = right.replace(/^\d+[\s\.\)]+/, '').trim();
+            // DETECTA SE A LINHA TEM O SEPARADOR DE COLUNA GERADO NO PROCESS_PDF
+            if (line.includes("[COL_SEP]")) {
+                const parts = line.split("[COL_SEP]");
+                const left = parts[0]?.replace(/^\d+[\s\.\)]+/, '').trim();
+                const right = parts[1]?.replace(/^\d+[\s\.\)]+/, '').trim();
                 
-                if (cleanL.length > 3 && !cleanL.toUpperCase().includes("QUANDO AUTUAR")) atuar.push(cleanL);
-                if (cleanR.length > 3 && !cleanR.toUpperCase().includes("QUANDO NÃO AUTUAR")) naoAtuar.push(cleanR);
+                if (left && left.length > 3 && !left.toUpperCase().includes("QUANDO AUTUAR")) atuar.push(left);
+                if (right && right.length > 3 && !right.toUpperCase().includes("QUANDO NÃO AUTUAR")) naoAtuar.push(right);
             } else {
-                // Se a linha não tem o divisor, verificamos se ela pertence a uma coluna específica por cabeçalho
+                // Linha sem separador mas dentro da zona técnica: decidimos por contexto
                 const clean = line.replace(/^\d+[\s\.\)]+/, '').trim();
-                if (clean.length > 3 && !upper.includes("QUANDO AUTUAR") && !upper.includes("QUANDO NÃO AUTUAR")) {
-                    // Como não tem divisor, assumimos que é uma linha de coluna única (overflow de texto longo)
-                    // Decidimos onde colocar baseado na última coluna populada
-                    if (naoAtuar.length > atuar.length) naoAtuar.push(clean);
-                    else atuar.push(clean);
+                if (clean.length > 3 && !upper.includes("AUTUAR") && !upper.includes("CONSELHO")) {
+                   // Se houver muito mais "atuar" que "não atuar", provavelmente é uma quebra de linha da esquerda
+                   if (atuar.length > naoAtuar.length) atuar.push(clean);
+                   else naoAtuar.push(clean);
                 }
             }
           } else {
-            // Modo Linear (Definições e Exemplos)
             const clean = line.replace(/^\d+[\s\.\)]+/, '').replace(/^•\s*/, '').trim();
-            if (clean.length > 3) {
-              if (upper.includes("EXEMPLOS") || ex.length > 0) ex.push(clean);
-              else defs.push(clean);
+            if (clean.length > 3 && !upper.includes("CONSELHO")) {
+                if (upper.includes("EXEMPLOS") || ex.length > 0) ex.push(clean);
+                else defs.push(clean);
             }
           }
         });
@@ -217,7 +213,7 @@ export default function App() {
 
       return result;
     } catch (e) {
-      console.error("Erro no processador MBFT 10.0:", e);
+      console.error("Erro no processador MBFT 11.0:", e);
       return null;
     }
   };
@@ -225,7 +221,7 @@ export default function App() {
   const processPDF = async (file: File) => {
     setIsProcessing(true);
     setProgress(0);
-    setBatchStatus('Iniciando Motor V10 (Midline Detection)...');
+    setBatchStatus('Iniciando Motor V11 (Dynamic Clustering)...');
     try {
       const arrayBuffer = await file.arrayBuffer();
       const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
@@ -233,23 +229,26 @@ export default function App() {
       
       for (let i = 1; i <= pdf.numPages; i++) {
         const page = await pdf.getPage(i);
-        const viewport = page.getViewport({ scale: 1.0 });
         const textContent = await page.getTextContent();
         
-        // EIXO CENTRAL DA PÁGINA (Midline)
-        const pageWidth = viewport.width;
-        const midline = pageWidth / 2;
-
+        // 1. MAPEAMENTO DE ITENS COM COORDENADAS
         const items = textContent.items.map((item: any) => ({
           str: item.str,
           x: item.transform[4],
-          y: item.transform[5]
+          y: item.transform[5],
+          w: item.width
         }));
 
-        // Agrupar itens por linha (Y)
+        // 2. DETECÇÃO DINÂMICA DE COLUNAS (Clustering)
+        // Encontra os X onde os textos mais começam
+        const xStarts = items.map(it => Math.round(it.x)).sort((a,b) => a-b);
+        const midPoint = xStarts[Math.floor(xStarts.length / 2)]; 
+        // Em um PDF 2 colunas, o midPoint estatístico divide bem os clusters esquerda/direita
+
+        // 3. AGRUPAMENTO POR LINHA (Y)
         const rows: Record<number, any[]> = {};
         items.forEach(item => {
-          const yKey = Math.round(item.y / 4) * 4; // Tolerância de 4px
+          const yKey = Math.round(item.y / 3) * 3; // Tolerância fina de 3px
           if (!rows[yKey]) rows[yKey] = [];
           rows[yKey].push(item);
         });
@@ -260,20 +259,19 @@ export default function App() {
         sortedY.forEach(y => {
           const rowItems = rows[y].sort((a, b) => a.x - b.x);
           
-          // Reconstruir a linha com marcador de midline "|||"
-          let leftStr = "";
-          let rightStr = "";
+          let leftPart = "";
+          let rightPart = "";
           
           rowItems.forEach(item => {
-            if (item.x < midline) leftStr += " " + item.str;
-            else rightStr += " " + item.str;
+            // Se o item começa antes do ponto de equilíbrio estatístico, é coluna 1
+            if (item.x < midPoint) leftPart += " " + item.str;
+            else rightPart += " " + item.str;
           });
 
-          // Se a linha tem conteúdo em ambos os lados, usamos o divisor
-          if (leftStr.trim() && rightStr.trim()) {
-            pageText += leftStr.trim() + " ||| " + rightStr.trim() + "\n";
+          if (leftPart.trim() && rightPart.trim()) {
+            pageText += leftPart.trim() + " [COL_SEP] " + rightPart.trim() + "\n";
           } else {
-            pageText += (leftStr.trim() || rightStr.trim()) + "\n";
+            pageText += (leftPart.trim() || rightPart.trim()) + "\n";
           }
         });
 

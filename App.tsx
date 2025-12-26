@@ -55,7 +55,7 @@ export default function App() {
   const [selectedInfraction, setSelectedInfraction] = useState<Infraction | null>(null);
   const [infractions, setInfractions] = useState<Infraction[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [progress, setProgress] = useState(0);
+  const [progress, setProgress] = useState(progress => 0);
   const [batchStatus, setBatchStatus] = useState('');
   const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -120,7 +120,6 @@ export default function App() {
         if (idxResumida !== -1 && idxCodigoLabel !== -1 && idxCodigoLabel > idxResumida) {
           titulo = strings.slice(idxResumida + 1, idxCodigoLabel).join(' ').trim();
         } else {
-          // Fallback caso a estrutura mude levemente
           const fallbackMatch = fullText.match(/Tipificação Resumida:(.*?)Código do Enquadramento:/i);
           titulo = fallbackMatch ? fallbackMatch[1].trim() : `Infração ${codigo}`;
         }
@@ -128,10 +127,20 @@ export default function App() {
         // CAPTURA DE DESCRIÇÃO (Tipificação do Enquadramento)
         let descricao = "";
         const idxEnquadramento = strings.findIndex(s => s.includes("Tipificação do Enquadramento:"));
-        const idxGravidade = strings.findIndex(s => s.includes("Gravidade:"));
+        const idxGravidadeLabel = strings.findIndex(s => s.includes("Gravidade:"));
 
-        if (idxEnquadramento !== -1 && idxGravidade !== -1 && idxGravidade > idxEnquadramento) {
-          descricao = strings.slice(idxEnquadramento + 1, idxGravidade).join(' ').trim();
+        if (idxEnquadramento !== -1 && idxGravidadeLabel !== -1 && idxGravidadeLabel > idxEnquadramento) {
+          descricao = strings.slice(idxEnquadramento + 1, idxGravidadeLabel).join(' ').trim();
+        }
+
+        // CAPTURA DE GRAVIDADE (NATUREZA) - NOVO
+        let natureza: Natureza = Natureza.NAO_APLICAVEL;
+        if (idxGravidadeLabel !== -1 && strings[idxGravidadeLabel + 1]) {
+           const val = strings[idxGravidadeLabel + 1].trim().toLowerCase();
+           if (val.includes("gravíssima")) natureza = Natureza.GRAVISSIMA;
+           else if (val.includes("grave")) natureza = Natureza.GRAVE;
+           else if (val.includes("média") || val.includes("media")) natureza = Natureza.MEDIA;
+           else if (val.includes("leve")) natureza = Natureza.LEVE;
         }
 
         // Divisão das colunas inferiores
@@ -147,11 +156,11 @@ export default function App() {
           artigo: artigo,
           titulo_curto: titulo || `Infração ${codigo}`,
           descricao: descricao || titulo,
+          natureza: natureza,
           quando_atuar: [getSection("Quando AUTUAR")],
           quando_nao_atuar: [getSection("Quando NÃO Autuar")],
           definicoes_procedimentos: [getSection("Definições e Procedimentos")],
           exemplos_ait: [getSection("Exemplos do Campo de Observações do AIT:")],
-          natureza: Natureza.NAO_APLICAVEL,
           status: 'ativo'
         });
 
@@ -344,7 +353,7 @@ export default function App() {
                         <Icons.File />
                         <div className="text-center">
                           <span className="text-[10px] font-black uppercase block">Carregar PDF MBFT</span>
-                          <span className="text-[8px] opacity-40 uppercase">Extração de Título Resumido</span>
+                          <span className="text-[8px] opacity-40 uppercase">Extração de Título e Gravidade</span>
                         </div>
                     </button>
 

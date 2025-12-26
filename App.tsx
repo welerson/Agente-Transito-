@@ -103,7 +103,7 @@ export default function App() {
       .slice(0, 10);
   }, [infractions]);
 
-  // MOTOR DE EXTRAÇÃO MBFT 4.0 - RESILIENTE A COLUNAS
+  // MOTOR DE EXTRAÇÃO MBFT 5.0 - ESPECIALIZADO EM DUAS COLUNAS
   const parseManualText = (rawText: string): Partial<Infraction> | null => {
     try {
       const content = rawText.replace(/[ \t]+/g, ' ').replace(/\r\n/g, '\n');
@@ -117,10 +117,10 @@ export default function App() {
         { key: 'gravidade', regex: /Gravidade/i },
         { key: 'penalidade', regex: /Penalidade/i },
         { key: 'medida_admin', regex: /Medida\s+Administrativa/i },
-        { key: 'quando_atuar', regex: /Quando\s+AUTUAR/i },
-        { key: 'quando_nao_atuar', regex: /Quando\s+N[ÃA]O\s+Autuar/i },
-        { key: 'definicoes', regex: /Defini[çc][õo]es\s+e\s+Procedimentos/i },
-        { key: 'exemplos_ait', regex: /Exemplos\s+do\s+Campo\s+de\s+Observa[çc][õo]es/i },
+        { key: 'atuar_header', regex: /Quando\s+AUTUAR/i },
+        { key: 'nao_atuar_header', regex: /Quando\s+N[ÃA]O\s+Autuar/i },
+        { key: 'defs_header', regex: /Defini[çc][õo]es\s+e\s+Procedimentos/i },
+        { key: 'exemplos_header', regex: /Exemplos\s+do\s+Campo\s+de\s+Observa[çc][õo]es/i },
         { key: 'fim_ficha', regex: /CONSELHO\s+NACIONAL\s+DE\s+TR[ÃA]NSITO/i }
       ];
 
@@ -140,44 +140,55 @@ export default function App() {
 
       if (!sections.codigo_enquadramento) return null;
 
-      // ALGORITMO DE DISTRIBUIÇÃO DE ÁREA TÉCNICA (BUCKET SYSTEM)
+      // ALGORITMO DE SEPARAÇÃO DE COLUNAS (PARSER 5.0)
       const processTechnicalSection = () => {
         const atuar: string[] = [];
         const naoAtuar: string[] = [];
         const defs: string[] = [];
         const ex: string[] = [];
 
-        // Encontramos o início da tabela (Quando Autuar)
-        const areaStartIdx = markers.find(m => m.key === 'quando_atuar')?.index || -1;
-        if (areaStartIdx === -1) return { atuar, naoAtuar, defs, ex };
+        const startIdx = markers.find(m => m.key === 'atuar_header')?.index || -1;
+        const endIdx = markers.find(m => m.key === 'fim_ficha' && m.index > startIdx)?.index || content.length;
+        const techRaw = content.substring(startIdx, endIdx);
 
-        // Pegamos o texto bruto até o fim da ficha
-        const areaEndIdx = markers.find(m => m.key === 'fim_ficha' && m.index > areaStartIdx)?.index || content.length;
-        const areaRaw = content.substring(areaStartIdx, areaEndIdx);
-
-        const lines = areaRaw.split('\n').filter(l => l.length > 3);
+        const lines = techRaw.split('\n').map(l => l.trim()).filter(l => l.length > 2);
         let activeBucket = 0; // 0=Atuar, 1=NaoAtuar, 2=Defs, 3=Exemplos
 
         lines.forEach(line => {
           const upper = line.toUpperCase();
           
-          // Mudança de estado baseada em cabeçalhos (Resiliente a colunas fundidas)
-          if (upper.includes("QUANDO AUTUAR")) { activeBucket = 0; }
-          if (upper.includes("QUANDO NÃO AUTUAR")) { activeBucket = 1; }
-          if (upper.includes("DEFINIÇÕES E PROCEDIMENTOS")) { activeBucket = 2; }
-          if (upper.includes("EXEMPLOS DO CAMPO")) { activeBucket = 3; }
+          // Troca de balde por cabeçalho
+          if (upper.includes("QUANDO AUTUAR") && upper.includes("QUANDO NÃO AUTUAR")) {
+            // Se ambos na mesma linha, o bucket é o 0 e o processador de linha vai splitar
+            activeBucket = 0;
+            return;
+          }
+          if (upper.includes("QUANDO NÃO AUTUAR")) { activeBucket = 1; return; }
+          if (upper.includes("DEFINIÇÕES E PROCEDIMENTOS")) { activeBucket = 2; return; }
+          if (upper.includes("EXEMPLOS DO CAMPO")) { activeBucket = 3; return; }
 
-          // Se a linha tem um número no começo, é um item de coluna
-          const cleanLine = line.replace(/^\d+[\s\.\)]+/, '').trim();
-          if (cleanLine.length < 5) return;
+          // LÓGICA DE SPLIT DE COLUNA (Detecta 1. ... 1. ...)
+          // Se a linha tem dois números iguais, ou dois números em sequência, splita
+          const items = line.split(/(\s\d+[\s\.\)]+)/);
           
-          // Se for cabeçalho puro, não salva como conteúdo
-          if (upper === "QUANDO AUTUAR" || upper === "QUANDO NÃO AUTUAR" || upper.includes("DEFINIÇÕES") || upper.includes("EXEMPLOS")) return;
+          if (items.length >= 3 && activeBucket === 0) {
+            // Linha com múltiplas colunas detectada
+            // items[0] = texto item 1, items[1] = numeração 2, items[2] = texto item 2
+            const part1 = items[0].replace(/^\d+[\s\.\)]+/, '').trim();
+            const part2 = items.slice(2).join('').trim();
+            
+            if (part1.length > 3) atuar.push(part1);
+            if (part2.length > 3) naoAtuar.push(part2);
+          } else {
+            const clean = line.replace(/^\d+[\s\.\)]+/, '').trim();
+            if (clean.length < 5) return;
+            if (upper.includes("QUANDO AUTUAR") || upper.includes("QUANDO NÃO")) return;
 
-          if (activeBucket === 0) atuar.push(cleanLine);
-          else if (activeBucket === 1) naoAtuar.push(cleanLine);
-          else if (activeBucket === 2) defs.push(cleanLine);
-          else if (activeBucket === 3) ex.push(cleanLine);
+            if (activeBucket === 0) atuar.push(clean);
+            else if (activeBucket === 1) naoAtuar.push(clean);
+            else if (activeBucket === 2) defs.push(clean);
+            else if (activeBucket === 3) ex.push(clean);
+          }
         });
 
         return { atuar, naoAtuar, defs, ex };
@@ -189,12 +200,12 @@ export default function App() {
         id: sections.codigo_enquadramento.match(/[\d-]+/)?.[0] || sections.codigo_enquadramento,
         codigo_enquadramento: sections.codigo_enquadramento.match(/[\d-]+/)?.[0] || sections.codigo_enquadramento,
         artigo: sections.artigo?.split('\n')[0].trim() || '',
-        titulo_curto: sections.titulo_curto?.split('\n')[0].trim() || 'Infração ' + sections.codigo_enquadramento,
+        titulo_curto: sections.titulo_curto?.split('\n')[0].trim() || 'Ficha ' + sections.codigo_enquadramento,
         descricao: sections.descricao?.replace(/\n/g, ' ').trim() || '',
-        quando_atuar: tech.atuar.length > 0 ? tech.atuar : [sections.quando_atuar].filter(s => !!s && s.length > 5),
-        quando_nao_atuar: tech.naoAtuar.length > 0 ? tech.naoAtuar : [sections.quando_nao_atuar].filter(s => !!s && s.length > 5),
-        definicoes_procedimentos: tech.defs.length > 0 ? tech.defs : [sections.definicoes].filter(s => !!s && s.length > 5),
-        exemplos_ait: tech.ex.length > 0 ? tech.ex : [sections.exemplos_ait].filter(s => !!s && s.length > 5),
+        quando_atuar: tech.atuar.length > 0 ? tech.atuar : [sections.atuar_header].filter(s => !!s && s.length > 5),
+        quando_nao_atuar: tech.naoAtuar.length > 0 ? tech.naoAtuar : [sections.nao_atuar_header].filter(s => !!s && s.length > 5),
+        definicoes_procedimentos: tech.defs.length > 0 ? tech.defs : [sections.defs_header].filter(s => !!s && s.length > 5),
+        exemplos_ait: tech.ex.length > 0 ? tech.ex : [sections.exemplos_header].filter(s => !!s && s.length > 5),
         penalidade: sections.penalidade?.split('\n')[0].trim() || 'Multa',
         medidas_administrativas: sections.medida_admin ? [sections.medida_admin.split('\n')[0].trim()] : []
       };
@@ -209,7 +220,7 @@ export default function App() {
 
       return result;
     } catch (e) {
-      console.error("Erro ao analisar ficha técnica:", e);
+      console.error("Erro no processador MBFT:", e);
       return null;
     }
   };
@@ -223,7 +234,7 @@ export default function App() {
     for (let i = 0; i < blocks.length; i++) {
       if (i % 20 === 0) {
         await yieldToBrowser();
-        setBatchStatus(`Processando: ${i + 1} de ${blocks.length}...`);
+        setBatchStatus(`Ficha ${i + 1} de ${blocks.length}...`);
       }
       const fullText = `CONSELHO NACIONAL DE TRÂNSITO ${blocks[i]}`;
       const parsed = parseManualText(fullText);
@@ -253,7 +264,7 @@ export default function App() {
   const processPDF = async (file: File) => {
     setIsProcessing(true);
     setProgress(0);
-    setBatchStatus('Iniciando leitura do manual...');
+    setBatchStatus('Iniciando análise inteligente...');
     try {
       const arrayBuffer = await file.arrayBuffer();
       const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
@@ -265,15 +276,15 @@ export default function App() {
         fullText += `\n\nCONSELHO NACIONAL DE TRÂNSITO\n` + pageText; 
         if (i % 10 === 0 || i === pdf.numPages) {
           setProgress(Math.round((i / pdf.numPages) * 100));
-          setBatchStatus(`Extraindo texto: página ${i} de ${pdf.numPages}...`);
+          setBatchStatus(`Lendo MBFT: página ${i} de ${pdf.numPages}...`);
           await yieldToBrowser();
         }
       }
       const importedCount = await handleBulkImport(fullText);
-      alert(`IMPORTAÇÃO FINALIZADA: ${importedCount} multas cadastradas.`);
+      alert(`SUCESSO: ${importedCount} infrações configuradas com diretrizes detalhadas.`);
       setIsAdminPanelOpen(false);
     } catch (e) {
-      alert('Erro crítico ao ler manual PDF.');
+      alert('Erro ao ler PDF.');
     } finally {
       setIsProcessing(false);
       setProgress(0);
@@ -304,7 +315,7 @@ export default function App() {
         }
       }
       if (count > 0) await batch.commit();
-      alert("Base de dados zerada.");
+      alert("Base reiniciada.");
     } catch (e) { alert("Erro ao limpar."); } finally { setIsProcessing(false); setBatchStatus(''); }
   };
 
@@ -314,7 +325,7 @@ export default function App() {
     try {
       const infRef = doc(db, 'infractions', inf.id);
       await updateDoc(infRef, { count_atuacoes: increment(1) });
-      alert(`Consulta em ${inf.codigo_enquadramento} registrada.`);
+      alert(`Consulta registrada.`);
       setQuickCode('');
     } catch (e) { alert('Erro.'); } finally { setIsRecording(false); }
   };
@@ -324,7 +335,7 @@ export default function App() {
       <div className="min-h-screen bg-blue-900 flex flex-col justify-center px-10">
         <div className="text-center mb-10">
           <h1 className="text-4xl font-black text-white italic tracking-tighter">Multas Rápidas</h1>
-          <p className="text-blue-300 text-[10px] font-bold uppercase tracking-widest mt-2">Fiscalização em Tempo Real</p>
+          <p className="text-blue-300 text-[10px] font-bold uppercase tracking-widest mt-2">Plataforma Oficial de Fiscalização</p>
         </div>
         <div className="bg-white p-8 rounded-[3rem] shadow-2xl space-y-4">
           <input type="email" placeholder="E-mail Funcional" className="w-full p-5 bg-slate-50 rounded-3xl outline-none font-bold" id="login-email" />
@@ -332,7 +343,7 @@ export default function App() {
             const email = (document.getElementById('login-email') as HTMLInputElement).value;
             if (!email) return;
             setUser({ id: 'agt-' + Date.now(), name: 'Agente', email, role: email.includes('admin') ? UserRole.GESTOR : UserRole.AGENTE });
-          }} className="w-full bg-blue-600 text-white py-5 rounded-3xl font-black uppercase shadow-xl btn-active">Entrar</button>
+          }} className="w-full bg-blue-600 text-white py-5 rounded-3xl font-black uppercase shadow-xl btn-active">Acessar</button>
         </div>
       </div>
     );
@@ -352,7 +363,7 @@ export default function App() {
         {activeTab === 'search' && !selectedInfraction && (
           <div className="space-y-4">
             <div className="flex gap-2">
-              <input className="flex-1 px-5 py-4 bg-white/10 rounded-3xl text-white outline-none font-black text-sm uppercase" placeholder="ENQUADRAMENTO (EX: 7510)" value={quickCode} onChange={e => setQuickCode(e.target.value)} />
+              <input className="flex-1 px-5 py-4 bg-white/10 rounded-3xl text-white outline-none font-black text-sm uppercase" placeholder="CÓDIGO (EX: 7510)" value={quickCode} onChange={e => setQuickCode(e.target.value)} />
               <button onClick={() => {
                 const search = quickCode.replace(/[^0-9]/g, '');
                 const found = infractions.find(i => i.codigo_enquadramento.replace(/[^0-9]/g, '') === search);
@@ -361,7 +372,7 @@ export default function App() {
             </div>
             <div className="relative">
               <div className="absolute inset-y-0 left-5 flex items-center text-blue-400"><Icons.Search /></div>
-              <input className="w-full pl-14 pr-6 py-4 bg-blue-900/40 border border-blue-700/50 rounded-3xl text-white outline-none font-bold text-sm" placeholder="O que observar?" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
+              <input className="w-full pl-14 pr-6 py-4 bg-blue-900/40 border border-blue-700/50 rounded-3xl text-white outline-none font-bold text-sm" placeholder="O que deseja pesquisar?" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
             </div>
           </div>
         )}
@@ -390,19 +401,19 @@ export default function App() {
                 <div className="bg-green-50 p-6 rounded-[2rem] border border-green-100">
                   <h4 className="text-[10px] font-black text-green-700 uppercase mb-4 tracking-widest">Quando Atuar</h4>
                   <ul className="text-xs font-bold text-green-900 space-y-4">
-                    {selectedInfraction.quando_atuar?.length ? selectedInfraction.quando_atuar.map((t, i) => <li key={i} className="flex gap-2 leading-relaxed"><span>•</span> <span>{t}</span></li>) : <li className="opacity-40 italic">Sem diretrizes técnicas</li>}
+                    {selectedInfraction.quando_atuar?.length ? selectedInfraction.quando_atuar.map((t, i) => <li key={i} className="flex gap-2 leading-relaxed"><span>•</span> <span>{t}</span></li>) : <li className="opacity-40 italic">Sem diretrizes disponíveis</li>}
                   </ul>
                 </div>
                 <div className="bg-red-50 p-6 rounded-[2rem] border border-red-100">
                   <h4 className="text-[10px] font-black text-red-700 uppercase mb-4 tracking-widest">Quando Não Atuar</h4>
                   <ul className="text-xs font-bold text-red-900 space-y-4">
-                    {selectedInfraction.quando_nao_atuar?.length ? selectedInfraction.quando_nao_atuar.map((t, i) => <li key={i} className="flex gap-2 leading-relaxed"><span>•</span> <span>{t}</span></li>) : <li className="opacity-40 italic">Sem restrições técnicas</li>}
+                    {selectedInfraction.quando_nao_atuar?.length ? selectedInfraction.quando_nao_atuar.map((t, i) => <li key={i} className="flex gap-2 leading-relaxed"><span>•</span> <span>{t}</span></li>) : <li className="opacity-40 italic">Sem restrições listadas</li>}
                   </ul>
                 </div>
                 
                 {selectedInfraction.definicoes_procedimentos && selectedInfraction.definicoes_procedimentos.length > 0 && (
                   <div className="bg-blue-50 p-6 rounded-[2rem] border border-blue-100">
-                    <h4 className="text-[10px] font-black text-blue-700 uppercase mb-4 tracking-widest">Definições e Procedimentos</h4>
+                    <h4 className="text-[10px] font-black text-blue-700 uppercase mb-4 tracking-widest">Procedimentos MBFT</h4>
                     <ul className="text-xs font-bold text-blue-900 space-y-3">
                       {selectedInfraction.definicoes_procedimentos.map((t, i) => <li key={i} className="flex gap-2 leading-relaxed"><span>•</span> <span>{t}</span></li>)}
                     </ul>
@@ -420,12 +431,12 @@ export default function App() {
               </div>
 
               <div className="p-6 bg-slate-50 rounded-[2rem] border border-slate-100">
-                <h4 className="text-[10px] font-black text-slate-500 uppercase mb-2">Penalidade / Administrativo</h4>
+                <h4 className="text-[10px] font-black text-slate-500 uppercase mb-2">Penalidade</h4>
                 <p className="text-xs font-black text-slate-900 uppercase leading-relaxed">{selectedInfraction.penalidade}</p>
               </div>
 
               <button onClick={() => handleRecord(selectedInfraction)} disabled={isRecording} className="w-full py-6 bg-blue-600 text-white rounded-[2rem] font-black uppercase text-xs btn-active shadow-2xl disabled:bg-slate-300">
-                REGISTRAR NO SISTEMA
+                REGISTRAR ATUAÇÃO
               </button>
             </div>
           </div>
@@ -447,7 +458,7 @@ export default function App() {
               ) : (
                 <div className="space-y-10">
                   <div className="flex flex-col items-center justify-center py-20 opacity-20 text-center text-slate-400">
-                    <Icons.Search /><p className="font-black text-xs uppercase mt-4 tracking-widest">Busque uma multa</p>
+                    <Icons.Search /><p className="font-black text-xs uppercase mt-4 tracking-widest">Pesquise por palavra ou código</p>
                   </div>
                   {topInfractions.length > 0 && (
                     <div className="bg-white rounded-[3rem] p-8 shadow-xl border border-slate-100">
@@ -471,7 +482,7 @@ export default function App() {
                 <div className="flex justify-between items-end">
                   <div className="space-y-1">
                     <h2 className="text-3xl font-black text-slate-900 tracking-tighter">Gestão</h2>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Controle de Base</p>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Base MBFT Oficial</p>
                   </div>
                   <div className="flex gap-2">
                     <button onClick={handleClearDatabase} disabled={isProcessing} className="bg-red-500 text-white px-4 py-4 rounded-[1.8rem] font-black text-xs btn-active shadow-xl"><Icons.Trash /></button>
@@ -481,7 +492,7 @@ export default function App() {
 
                 {isAdminPanelOpen && (
                   <div className="bg-white rounded-[3rem] p-8 shadow-2xl border-4 border-blue-50 space-y-6">
-                    <h3 className="text-xs font-black text-blue-600 uppercase flex items-center gap-2 tracking-widest"><Icons.Upload /> Importar Manual PDF</h3>
+                    <h3 className="text-xs font-black text-blue-600 uppercase flex items-center gap-2 tracking-widest"><Icons.Upload /> Importar PDF</h3>
                     <div onClick={() => !isProcessing && fileInputRef.current?.click()} className={`w-full py-12 border-4 border-dashed rounded-[2.5rem] flex flex-col items-center justify-center cursor-pointer transition-all ${isProcessing ? 'bg-blue-50 border-blue-200' : 'bg-slate-50 border-slate-100 hover:border-blue-200'}`}>
                         {isProcessing ? (
                             <div className="text-center w-full px-10">
@@ -489,7 +500,7 @@ export default function App() {
                                 <p className="text-[10px] font-black uppercase text-blue-600 tracking-widest">{batchStatus}</p>
                             </div>
                         ) : (
-                            <div className="text-center"><Icons.File /><p className="text-xs font-black uppercase text-slate-400 mt-2">Selecionar PDF do MBFT</p></div>
+                            <div className="text-center"><Icons.File /><p className="text-xs font-black uppercase text-slate-400 mt-2">Clique para importar Manual MBFT</p></div>
                         )}
                         <input ref={fileInputRef} type="file" accept=".pdf" className="hidden" onChange={handleFileUpload} disabled={isProcessing} />
                     </div>
@@ -497,10 +508,10 @@ export default function App() {
                 )}
                 
                 <div className="bg-white rounded-[3rem] p-8 shadow-xl border border-slate-100">
-                  <h3 className="text-[10px] font-black text-slate-400 uppercase mb-6 tracking-widest">Base de Dados Local ({infractions.length})</h3>
+                  <h3 className="text-[10px] font-black text-slate-400 uppercase mb-6 tracking-widest">Base Local ({infractions.length} multas)</h3>
                   <div className="space-y-3 max-h-[400px] overflow-y-auto no-scrollbar">
                     {infractions.sort((a,b) => a.codigo_enquadramento.localeCompare(b.codigo_enquadramento)).slice(0, 50).map(inf => (
-                      <div key={inf.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-[1.8rem] border border-slate-100">
+                      <div key={inf.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-[1.8rem] border border-slate-100 group">
                         <div className="truncate flex-1 pr-4">
                           <p className="text-[10px] font-black text-blue-600">{inf.codigo_enquadramento}</p>
                           <p className="text-xs font-bold text-slate-800 truncate">{inf.titulo_curto}</p>

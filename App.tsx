@@ -1,7 +1,6 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { User, UserRole, Infraction, Natureza } from './types';
-import { INITIAL_INFRACTIONS } from './mockData';
 import { db } from './firebase';
 import { 
   doc, 
@@ -17,6 +16,12 @@ import {
   limit
 } from 'firebase/firestore';
 
+// PDF.js worker setup
+declare const pdfjsLib: any;
+if (typeof window !== 'undefined' && 'pdfjsLib' in window) {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+}
+
 const Icons = {
   Search: () => <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>,
   History: () => <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
@@ -26,7 +31,7 @@ const Icons = {
   Flash: () => <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path d="M11 3a1 1 0 00-1 1v5H4a1 1 0 00-.832 1.554l7 10a1 1 0 001.664-1.108L10.832 11H17a1 1 0 00.832-1.554l-7-10A1 1 0 0011 3z" /></svg>,
   Trash: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>,
   Plus: () => <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>,
-  Json: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" /></svg>,
+  File: () => <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>,
 };
 
 const NatureTag: React.FC<{ natureza: Natureza }> = ({ natureza }) => {
@@ -53,7 +58,7 @@ export default function App() {
   const [progress, setProgress] = useState(0);
   const [batchStatus, setBatchStatus] = useState('');
   const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
-  const jsonInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(searchQuery), 300);
@@ -80,63 +85,93 @@ export default function App() {
       .slice(0, 30);
   }, [debouncedSearch, infractions]);
 
-  const handleJSONUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
+  // MOTOR DE EXTRAÇÃO BBOX (RESTORED)
+  const processPDF = async (file: File) => {
     setIsProcessing(true);
     setProgress(0);
-    setBatchStatus('Lendo arquivo JSON...');
+    setBatchStatus('Iniciando Extração por Regiões (Bbox)...');
     
     try {
-      const text = await file.text();
-      const jsonData = JSON.parse(text);
-      
-      if (!Array.isArray(jsonData)) {
-        alert("O arquivo JSON deve ser uma lista (array) de infrações.");
-        return;
-      }
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      let allFichas: Partial<Infraction>[] = [];
 
-      setBatchStatus(`Importando ${jsonData.length} registros...`);
-      let currentBatch = writeBatch(db);
-      let count = 0;
-      let total = 0;
-
-      for (let i = 0; i < jsonData.length; i++) {
-        const item = jsonData[i];
-        const id = item.codigo_enquadramento || item.codigo || item.id;
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const viewport = page.getViewport({ scale: 1.0 });
+        const textContent = await page.getTextContent();
         
-        if (!id) continue;
-
-        const infractionData: Partial<Infraction> = {
-          ...item,
-          id: String(id),
-          codigo_enquadramento: String(id),
-          status: 'ativo',
-          ultima_atualizacao: new Date().toISOString(),
-          count_atuacoes: item.count_atuacoes || 0
-        };
-
-        const docRef = doc(db, 'infractions', String(id));
-        currentBatch.set(docRef, infractionData, { merge: true });
+        const w = viewport.width;
+        const h = viewport.height;
         
-        count++;
-        total++;
-        
-        if (count >= 400) {
-          await currentBatch.commit();
-          currentBatch = writeBatch(db);
-          count = 0;
-          setProgress(Math.round(((i + 1) / jsonData.length) * 100));
-          await yieldToBrowser();
+        const items = textContent.items.map((item: any) => ({
+          str: item.str,
+          x: item.transform[4],
+          y: item.transform[5],
+          w: item.width,
+          h: item.height
+        }));
+
+        // ÂNCORA DINÂMICA
+        let anchorY = 0;
+        items.forEach(it => {
+          if (it.str.toUpperCase().includes("QUANDO AUTUAR")) anchorY = it.y;
+        });
+
+        if (anchorY === 0) continue;
+
+        const colW = w / 4;
+        const boxes = { atuar: [], naoAtuar: [], defs: [], exemplos: [] };
+
+        items.forEach(it => {
+          if (it.y > anchorY - 5 || it.y < 40) return; 
+
+          if (it.x < colW) boxes.atuar.push(it.str);
+          else if (it.x < colW * 2) boxes.naoAtuar.push(it.str);
+          else if (it.x < colW * 3) boxes.defs.push(it.str);
+          else boxes.exemplos.push(it.str);
+        });
+
+        let codigo = "";
+        let artigo = "";
+        items.forEach(it => {
+          if (it.y > anchorY + 20) {
+            if (it.str.match(/\d{3}-\d{2}/)) codigo = it.str.trim();
+            if (it.str.match(/Art\.\s+\d+/i)) artigo = it.str.trim();
+          }
+        });
+
+        if (codigo) {
+          allFichas.push({
+            id: codigo,
+            codigo_enquadramento: codigo,
+            artigo: artigo || 'N/A',
+            titulo_curto: `Ficha ${codigo}`,
+            quando_atuar: [boxes.atuar.join(" ")],
+            quando_nao_atuar: [boxes.naoAtuar.join(" ")],
+            definicoes_procedimentos: [boxes.defs.join(" ")],
+            exemplos_ait: [boxes.exemplos.join(" ")]
+          });
         }
+
+        setProgress(Math.round((i / pdf.numPages) * 100));
+        await yieldToBrowser();
       }
 
-      if (count > 0) await currentBatch.commit();
-      alert(`Sucesso! ${total} infrações importadas via JSON.`);
+      let batch = writeBatch(db);
+      let count = 0;
+      for (const ficha of allFichas) {
+        const ref = doc(db, 'infractions', ficha.id!);
+        batch.set(ref, { ...ficha, status: 'ativo', ultima_atualizacao: new Date().toISOString() }, { merge: true });
+        count++;
+        if (count >= 400) { await batch.commit(); batch = writeBatch(db); count = 0; }
+      }
+      if (count > 0) await batch.commit();
+      
+      alert(`${allFichas.length} fichas processadas com sucesso!`);
       setIsAdminPanelOpen(false);
     } catch (e) {
-      alert("Erro ao processar JSON. Verifique o formato.");
+      alert("Erro ao processar PDF.");
     } finally {
       setIsProcessing(false);
       setProgress(0);
@@ -200,7 +235,7 @@ export default function App() {
         <div className="flex justify-between items-center mb-6">
           <div className="flex flex-col">
             <h1 className="text-xl font-black italic">Multas Rápidas</h1>
-            <span className="text-[9px] font-bold text-blue-300 uppercase">{user.role}</span>
+            <span className="text-[9px] font-bold text-blue-300 uppercase">{user.role} ONLINE</span>
           </div>
           <button onClick={() => setUser(null)} className="p-2 opacity-50"><Icons.Logout /></button>
         </div>
@@ -215,7 +250,7 @@ export default function App() {
 
       <main className="flex-1 overflow-y-auto px-6 pt-6 pb-40 no-scrollbar">
         {selectedInfraction ? (
-          <div className="bg-white rounded-[3rem] shadow-2xl p-8 border border-slate-100 mb-10">
+          <div className="bg-white rounded-[3rem] shadow-2xl p-8 border border-slate-100 mb-10 animate-in slide-in-from-right duration-300">
             <div className="flex justify-between items-center mb-8">
                <button onClick={() => setSelectedInfraction(null)} className="flex items-center gap-2 text-blue-600 font-black uppercase text-[10px] bg-blue-50 px-5 py-3 rounded-full btn-active"><Icons.ArrowLeft /> Voltar</button>
                <span className="text-2xl font-black text-blue-600 tracking-tighter">{selectedInfraction.codigo_enquadramento}</span>
@@ -232,21 +267,25 @@ export default function App() {
 
               <div className="space-y-4">
                 <div className="bg-green-50 p-6 rounded-[2rem] border border-green-100">
-                  <h4 className="text-[10px] font-black text-green-700 uppercase mb-3 tracking-widest">Quando Atuar</h4>
+                  <h4 className="text-[10px] font-black text-green-700 uppercase mb-3 tracking-widest flex items-center gap-2">
+                    <div className="w-1.5 h-1.5 bg-green-500 rounded-full"></div> Quando Atuar
+                  </h4>
                   <div className="text-xs font-bold text-green-900 space-y-2">
                     {selectedInfraction.quando_atuar?.map((t, i) => <p key={i}>• {t}</p>)}
                   </div>
                 </div>
 
                 <div className="bg-red-50 p-6 rounded-[2rem] border border-red-100">
-                  <h4 className="text-[10px] font-black text-red-700 uppercase mb-3 tracking-widest">Quando Não Atuar</h4>
+                  <h4 className="text-[10px] font-black text-red-700 uppercase mb-3 tracking-widest flex items-center gap-2">
+                    <div className="w-1.5 h-1.5 bg-red-500 rounded-full"></div> Quando Não Atuar
+                  </h4>
                   <div className="text-xs font-bold text-red-900 space-y-2">
                     {selectedInfraction.quando_nao_atuar?.map((t, i) => <p key={i}>• {t}</p>)}
                   </div>
                 </div>
               </div>
 
-              <button onClick={() => handleRecord(selectedInfraction)} className="w-full py-6 bg-blue-600 text-white rounded-[2rem] font-black uppercase text-xs btn-active shadow-2xl">
+              <button onClick={() => handleRecord(selectedInfraction)} className="w-full py-6 bg-blue-600 text-white rounded-[2rem] font-black uppercase text-xs btn-active shadow-2xl transition-all">
                 REGISTRAR CONSULTA
               </button>
             </div>
@@ -255,7 +294,7 @@ export default function App() {
           <div className="space-y-6">
             {activeTab === 'search' && (
               debouncedSearch ? (
-                <div className="space-y-4">
+                <div className="space-y-4 animate-in fade-in duration-300">
                   {filteredInfractions.map(inf => (
                     <button key={inf.id} onClick={() => setSelectedInfraction(inf)} className="w-full text-left bg-white p-6 rounded-[2.5rem] shadow-md border border-slate-100 flex flex-col gap-2 btn-active">
                       <div className="flex justify-between items-center">
@@ -276,11 +315,11 @@ export default function App() {
             )}
 
             {activeTab === 'admin' && user.role === UserRole.GESTOR && (
-              <div className="space-y-8">
+              <div className="space-y-8 animate-in slide-in-from-bottom duration-300">
                 <div className="flex justify-between items-end">
                   <div className="space-y-1">
                     <h2 className="text-3xl font-black text-slate-900 tracking-tighter">Gestão</h2>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Importação Estruturada</p>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Painel Administrativo</p>
                   </div>
                   <div className="flex gap-2">
                     <button onClick={handleClearDatabase} disabled={isProcessing} className="bg-red-500 text-white p-4 rounded-[1.8rem] shadow-xl"><Icons.Trash /></button>
@@ -291,11 +330,11 @@ export default function App() {
                 {isAdminPanelOpen && (
                   <div className="bg-white rounded-[3rem] p-8 shadow-2xl border-4 border-blue-50 space-y-6">
                     <button 
-                        onClick={() => !isProcessing && jsonInputRef.current?.click()}
+                        onClick={() => !isProcessing && fileInputRef.current?.click()}
                         className="w-full py-8 bg-slate-900 text-white rounded-[2rem] flex flex-col items-center justify-center gap-2 btn-active"
                     >
-                        <Icons.Json />
-                        <span className="text-[10px] font-black uppercase">Importar JSON (Base MBFT)</span>
+                        <Icons.File />
+                        <span className="text-[10px] font-black uppercase">Importar PDF (MBFT Bbox)</span>
                     </button>
 
                     {isProcessing && (
@@ -306,7 +345,7 @@ export default function App() {
                             <p className="text-[10px] font-black uppercase text-blue-600">{batchStatus}</p>
                         </div>
                     )}
-                    <input ref={jsonInputRef} type="file" accept=".json" className="hidden" onChange={handleJSONUpload} />
+                    <input ref={fileInputRef} type="file" accept=".pdf" className="hidden" onChange={e => e.target.files?.[0] && processPDF(e.target.files[0])} />
                   </div>
                 )}
                 

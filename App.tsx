@@ -32,7 +32,6 @@ const Icons = {
   Plus: () => <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>,
   Upload: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0l-4 4m4-4v12" /></svg>,
   File: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>,
-  Document: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>,
 };
 
 const NatureTag: React.FC<{ natureza: Natureza }> = ({ natureza }) => {
@@ -55,7 +54,6 @@ export default function App() {
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [quickCode, setQuickCode] = useState('');
   const [selectedInfraction, setSelectedInfraction] = useState<Infraction | null>(null);
-  const [isFichaMode, setIsFichaMode] = useState(false);
   const [infractions, setInfractions] = useState<Infraction[]>([]);
   const [isRecording, setIsRecording] = useState(false);
   const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
@@ -318,127 +316,6 @@ export default function App() {
     } catch (e) { alert('Erro.'); } finally { setIsRecording(false); }
   };
 
-  const FichaMBFT = ({ infraction }: { infraction: Infraction }) => (
-    <div className="bg-white min-h-screen pb-20 overflow-y-auto">
-      <div className="bg-slate-900 text-white p-6 sticky top-0 z-50 flex items-center justify-between">
-        <button onClick={() => setIsFichaMode(false)} className="p-2 bg-white/10 rounded-full">
-          <Icons.ArrowLeft />
-        </button>
-        <span className="font-black tracking-widest uppercase text-[10px]">Espelho da Ficha Oficial</span>
-        <div className="w-8" />
-      </div>
-
-      <div className="p-6 space-y-6">
-        {/* CABEÇALHO TÉCNICO */}
-        <div className="border-4 border-slate-900 p-6 rounded-3xl space-y-4">
-          <div className="flex justify-between items-start">
-            <div className="space-y-1">
-              <h2 className="text-3xl font-black text-slate-900 tracking-tighter">{infraction.codigo_enquadramento}</h2>
-              <p className="text-[10px] font-black text-slate-400 uppercase">CÓDIGO DE ENQUADRAMENTO</p>
-            </div>
-            <NatureTag natureza={infraction.natureza} />
-          </div>
-          <div className="pt-4 border-t border-slate-100">
-            <p className="text-sm font-black text-slate-900 uppercase">Art. {infraction.artigo}</p>
-            <p className="text-xs font-bold text-slate-500 mt-1 uppercase leading-tight">{infraction.titulo_curto}</p>
-          </div>
-        </div>
-
-        {/* TIPIFICAÇÃO COMPLETA */}
-        <div className="space-y-2">
-          <h3 className="text-[10px] font-black text-blue-600 uppercase tracking-widest px-1">Tipificação do Enquadramento</h3>
-          <div className="bg-blue-50 p-6 rounded-3xl border border-blue-100">
-            <p className="text-xs font-bold text-blue-900 leading-relaxed italic">"{infraction.descricao}"</p>
-          </div>
-        </div>
-
-        {/* TABELA DE DIRETRIZES */}
-        <div className="grid grid-cols-1 gap-4">
-          <div className="bg-green-50 rounded-3xl border border-green-200 overflow-hidden">
-            <div className="bg-green-600 px-6 py-3">
-              <h4 className="text-[10px] font-black text-white uppercase tracking-widest">Quando Autuar</h4>
-            </div>
-            <div className="p-6 space-y-3">
-              {infraction.quando_atuar.length > 0 ? (
-                infraction.quando_atuar.map((line, idx) => (
-                  <div key={idx} className="flex gap-3 text-xs font-bold text-green-900 leading-relaxed">
-                    <span className="opacity-30">{idx + 1}.</span>
-                    <p>{line}</p>
-                  </div>
-                ))
-              ) : <p className="text-xs italic text-green-700 opacity-50">Sem diretrizes específicas no manual.</p>}
-            </div>
-          </div>
-
-          <div className="bg-red-50 rounded-3xl border border-red-200 overflow-hidden">
-            <div className="bg-red-600 px-6 py-3">
-              <h4 className="text-[10px] font-black text-white uppercase tracking-widest">Quando Não Autuar</h4>
-            </div>
-            <div className="p-6 space-y-3">
-              {infraction.quando_nao_atuar.length > 0 ? (
-                infraction.quando_nao_atuar.map((line, idx) => (
-                  <div key={idx} className="flex gap-3 text-xs font-bold text-red-900 leading-relaxed">
-                    <span className="opacity-30">{idx + 1}.</span>
-                    <p>{line}</p>
-                  </div>
-                ))
-              ) : <p className="text-xs italic text-red-700 opacity-50">Sem restrições listadas no manual.</p>}
-            </div>
-          </div>
-        </div>
-
-        {/* PROCEDIMENTOS E DEFINIÇÕES */}
-        {infraction.definicoes_procedimentos && infraction.definicoes_procedimentos.length > 0 && (
-          <div className="space-y-2">
-            <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-1">Definições e Procedimentos</h3>
-            <div className="bg-white border-2 border-slate-100 p-6 rounded-3xl space-y-4 shadow-sm">
-              {infraction.definicoes_procedimentos.map((line, idx) => (
-                <div key={idx} className="text-xs font-bold text-slate-700 leading-relaxed border-b border-slate-50 pb-3 last:border-0 last:pb-0">
-                  {line}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* EXEMPLOS DE OBSERVAÇÃO */}
-        {infraction.exemplos_ait && infraction.exemplos_ait.length > 0 && (
-          <div className="space-y-2">
-            <h3 className="text-[10px] font-black text-orange-600 uppercase tracking-widest px-1">Exemplos de Observação (AIT)</h3>
-            <div className="bg-orange-50 border border-orange-200 p-6 rounded-3xl space-y-4">
-              {infraction.exemplos_ait.map((line, idx) => (
-                <div key={idx} className="flex gap-3 text-xs font-black text-orange-900 leading-relaxed">
-                   <div className="w-1.5 h-1.5 bg-orange-400 rounded-full mt-1.5 shrink-0" />
-                   <p className="italic">{line}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* PENALIDADES */}
-        <div className="bg-slate-900 rounded-[2.5rem] p-8 text-white space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <p className="text-[8px] font-black opacity-40 uppercase tracking-widest">Penalidade</p>
-              <p className="text-xs font-black mt-1">{infraction.penalidade}</p>
-            </div>
-            <div>
-              <p className="text-[8px] font-black opacity-40 uppercase tracking-widest">Pontuação</p>
-              <p className="text-xs font-black mt-1">{infraction.pontos}</p>
-            </div>
-          </div>
-          <div className="pt-4 border-t border-white/10">
-            <p className="text-[8px] font-black opacity-40 uppercase tracking-widest">Medidas Administrativas</p>
-            <p className="text-xs font-bold mt-1">
-              {infraction.medidas_administrativas.length > 0 ? infraction.medidas_administrativas.join(', ') : 'Nenhuma'}
-            </p>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-
   if (!user) {
     return (
       <div className="min-h-screen bg-blue-900 flex flex-col justify-center px-10">
@@ -456,10 +333,6 @@ export default function App() {
         </div>
       </div>
     );
-  }
-
-  if (selectedInfraction && isFichaMode) {
-    return <FichaMBFT infraction={selectedInfraction} />;
   }
 
   return (
@@ -496,7 +369,6 @@ export default function App() {
           <div className="bg-white rounded-[3rem] shadow-2xl p-8 border border-slate-100 mb-10">
             <div className="flex justify-between items-center mb-8">
                <button onClick={() => setSelectedInfraction(null)} className="flex items-center gap-2 text-blue-600 font-black uppercase text-[10px] bg-blue-50 px-5 py-3 rounded-full btn-active"><Icons.ArrowLeft /> Voltar</button>
-               <button onClick={() => setIsFichaMode(true)} className="flex items-center gap-2 text-white font-black uppercase text-[10px] bg-slate-900 px-5 py-3 rounded-full btn-active shadow-lg shadow-slate-900/20"><Icons.Document /> Ver Ficha Completa</button>
             </div>
             
             <div className="flex justify-between items-start mb-6">
@@ -513,18 +385,58 @@ export default function App() {
                 <p className="text-sm text-blue-100 italic leading-relaxed">"{selectedInfraction.descricao}"</p>
               </div>
 
-              <div className="space-y-4">
+              {/* DESMEMBRAMENTO DAS INFORMAÇÕES TÉCNICAS */}
+              <div className="space-y-6">
                 <div className="bg-green-50 p-6 rounded-[2rem] border border-green-100">
-                  <h4 className="text-[10px] font-black text-green-700 uppercase mb-4 tracking-widest">Resumo Atuação</h4>
+                  <h4 className="text-[10px] font-black text-green-700 uppercase mb-4 tracking-widest">Quando Atuar</h4>
                   <ul className="text-xs font-bold text-green-900 space-y-4">
-                    {selectedInfraction.quando_atuar?.length ? selectedInfraction.quando_atuar.slice(0, 2).map((t, i) => <li key={i} className="flex gap-2 leading-relaxed"><span>•</span> <span>{t}</span></li>) : <li className="opacity-40 italic">Sem diretrizes disponíveis</li>}
+                    {selectedInfraction.quando_atuar?.length ? selectedInfraction.quando_atuar.map((t, i) => <li key={i} className="flex gap-2 leading-relaxed"><span>{i+1}.</span> <span>{t}</span></li>) : <li className="opacity-40 italic">Sem diretrizes disponíveis</li>}
                   </ul>
                 </div>
+
+                <div className="bg-red-50 p-6 rounded-[2rem] border border-red-100">
+                  <h4 className="text-[10px] font-black text-red-700 uppercase mb-4 tracking-widest">Quando Não Atuar</h4>
+                  <ul className="text-xs font-bold text-red-900 space-y-4">
+                    {selectedInfraction.quando_nao_atuar?.length ? selectedInfraction.quando_nao_atuar.map((t, i) => <li key={i} className="flex gap-2 leading-relaxed"><span>{i+1}.</span> <span>{t}</span></li>) : <li className="opacity-40 italic">Sem restrições listadas</li>}
+                  </ul>
+                </div>
+
+                {selectedInfraction.definicoes_procedimentos && selectedInfraction.definicoes_procedimentos.length > 0 && (
+                  <div className="bg-blue-50 p-6 rounded-[2rem] border border-blue-100">
+                    <h4 className="text-[10px] font-black text-blue-700 uppercase mb-4 tracking-widest">Definições e Procedimentos</h4>
+                    <ul className="text-xs font-bold text-blue-900 space-y-3">
+                      {selectedInfraction.definicoes_procedimentos.map((t, i) => <li key={i} className="flex gap-2 leading-relaxed border-b border-blue-200/30 pb-2 last:border-0 last:pb-0"><span>•</span> <span>{t}</span></li>)}
+                    </ul>
+                  </div>
+                )}
+
+                {selectedInfraction.exemplos_ait && selectedInfraction.exemplos_ait.length > 0 && (
+                  <div className="bg-orange-50 p-6 rounded-[2rem] border border-orange-100">
+                    <h4 className="text-[10px] font-black text-orange-700 uppercase mb-4 tracking-widest">Exemplos de Observação (AIT)</h4>
+                    <ul className="text-xs font-black text-orange-900 space-y-3 italic">
+                      {selectedInfraction.exemplos_ait.map((t, i) => <li key={i} className="flex gap-2 leading-relaxed"><span>•</span> <span>{t}</span></li>)}
+                    </ul>
+                  </div>
+                )}
               </div>
 
-              <div className="p-6 bg-slate-50 rounded-[2rem] border border-slate-100">
-                <h4 className="text-[10px] font-black text-slate-500 uppercase mb-2">Penalidade Principal</h4>
-                <p className="text-xs font-black text-slate-900 uppercase leading-relaxed">{selectedInfraction.penalidade}</p>
+              <div className="p-6 bg-slate-900 rounded-[2rem] text-white">
+                <div className="grid grid-cols-2 gap-4 mb-4">
+                  <div>
+                    <h4 className="text-[8px] font-black opacity-50 uppercase tracking-widest">Penalidade</h4>
+                    <p className="text-xs font-black mt-1">{selectedInfraction.penalidade}</p>
+                  </div>
+                  <div>
+                    <h4 className="text-[8px] font-black opacity-50 uppercase tracking-widest">Pontos</h4>
+                    <p className="text-xs font-black mt-1">{selectedInfraction.pontos}</p>
+                  </div>
+                </div>
+                <div className="pt-4 border-t border-white/10">
+                  <h4 className="text-[8px] font-black opacity-50 uppercase tracking-widest">Medidas Admin</h4>
+                  <p className="text-xs font-bold mt-1">
+                    {selectedInfraction.medidas_administrativas.length > 0 ? selectedInfraction.medidas_administrativas.join(', ') : 'Nenhuma'}
+                  </p>
+                </div>
               </div>
 
               <button onClick={() => handleRecord(selectedInfraction)} disabled={isRecording} className="w-full py-6 bg-blue-600 text-white rounded-[2rem] font-black uppercase text-xs btn-active shadow-2xl disabled:bg-slate-300">
